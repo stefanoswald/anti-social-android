@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The app draws its own top bar, so the main screen has no action bar. -->
+    <style name="Theme.AntiSocial" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/accent</item>
+        <item name="android:statusBarColor">?attr/colorSurface</item>
+    </style>
+
+    <style name="Theme.AntiSocial.Settings" parent="Theme.Material3.DayNight">
+        <item name="colorPrimary">@color/accent</item>
+        <item name="android:statusBarColor">?attr/colorSurface</item>
+    </style>
+</resources>

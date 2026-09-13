@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <PreferenceCategory app:title="@string/sec_accounts">
+        <Preference app:key="noteAccounts" app:summary="@string/sec_accounts_note"
+            app:selectable="false" app:iconSpaceReserved="false" />
+        <EditTextPreference
+            app:key="facebookUsername"
+            app:title="@string/pref_fb_username"
+            app:useSimpleSummaryProvider="true" />
+        <EditTextPreference
+            app:key="instagramUsername"
+            app:title="@string/pref_ig_username"
+            app:useSimpleSummaryProvider="true" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="@string/sec_posting">
+        <SwitchPreferenceCompat
+            app:key="allowPosting"
+            app:defaultValue="true"
+            app:title="@string/pref_posting"
+            app:summary="@string/pref_posting_note" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="@string/sec_blocking">
+        <Preference app:key="noteBlocking" app:summary="@string/sec_blocking_note"
+            app:selectable="false" app:iconSpaceReserved="false" />
+        <SwitchPreferenceCompat app:key="hideDistractions" app:defaultValue="true" app:title="@string/pref_hide" />
+        <SwitchPreferenceCompat app:key="allowReelPermalinks" app:defaultValue="false" app:title="@string/pref_reels" />
+        <SwitchPreferenceCompat app:key="allowGroupPosts" app:defaultValue="true" app:title="@string/pref_groups" />
+        <SwitchPreferenceCompat app:key="externalLinksInBrowser" app:defaultValue="true" app:title="@string/pref_external" />
+        <SwitchPreferenceCompat app:key="showBlockToasts" app:defaultValue="true" app:title="@string/pref_toasts" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="@string/sec_site">
+        <Preference app:key="noteSite" app:summary="@string/sec_site_note"
+            app:selectable="false" app:iconSpaceReserved="false" />
+        <SwitchPreferenceCompat app:key="desktopModeFacebook" app:defaultValue="true" app:title="@string/pref_desktop_fb" />
+        <SwitchPreferenceCompat app:key="desktopModeInstagram" app:defaultValue="false" app:title="@string/pref_desktop_ig" />
+        <ListPreference
+            app:key="desktopViewportWidth"
+            app:title="@string/pref_width"
+            app:defaultValue="760"
+            app:entries="@array/width_labels"
+            app:entryValues="@array/width_values"
+            app:useSimpleSummaryProvider="true" />
+    </PreferenceCategory>
+
+    <PreferenceCategory>
+        <Preference app:key="logOut" app:title="@string/log_out" app:summary="@string/log_out_body" />
+    </PreferenceCategory>
+</PreferenceScreen>

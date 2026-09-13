@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Anti-Social</string>
+
+    <string name="tab_messages">Messages</string>
+    <string name="tab_marketplace">Market</string>
+    <string name="tab_alerts">Alerts</string>
+    <string name="tab_ig_inbox">IG Inbox</string>
+    <string name="tab_ig_alerts">IG Alerts</string>
+
+    <string name="back">Back</string>
+    <string name="reload">Reload</string>
+    <string name="compose">Compose</string>
+    <string name="more">More</string>
+    <string name="share">Share</string>
+    <string name="close">Close</string>
+    <string name="settings">Settings</string>
+
+    <string name="compose_post">New post</string>
+    <string name="compose_story">New story</string>
+    <string name="compose_live">Go live</string>
+    <string name="compose_listing">Sell something</string>
+
+    <string name="menu_home">Back to %1$s</string>
+    <string name="menu_diagnostics">Diagnostics</string>
+    <string name="menu_settings">Settings</string>
+
+    <string name="blocked_toast">Blocked: %1$s</string>
+    <string name="no_browser">No app can open that link.</string>
+    <string name="no_picker">No app available to pick a file.</string>
+
+    <string name="diagnostics_page">Current page</string>
+    <string name="diagnostics_blocks">Blocked so far</string>
+    <string name="diagnostics_none">Nothing blocked yet.</string>
+
+    <string name="log_out">Log out</string>
+    <string name="log_out_title">Log out of Facebook and Instagram?</string>
+    <string name="log_out_body">Clears all cookies and site data. You will need to sign in again.</string>
+
+    <!-- Settings screen -->
+    <string name="sec_accounts">Your accounts</string>
+    <string name="sec_accounts_note">The app fills these in by itself once you have used each tab. They let you open your own profile and post there. Every other profile stays blocked.</string>
+    <string name="pref_fb_username">Facebook username</string>
+    <string name="pref_ig_username">Instagram username</string>
+
+    <string name="sec_posting">Posting</string>
+    <string name="pref_posting">Allow posting</string>
+    <string name="pref_posting_note">Turns on the compose button: write a post, add a story, go live, or list something on Marketplace. Watching other people\'s Reels and Stories stays blocked either way.</string>
+
+    <string name="sec_blocking">Blocking</string>
+    <string name="pref_hide">Hide feed links inside pages</string>
+    <string name="pref_reels">Allow single Reels from notifications</string>
+    <string name="pref_groups">Allow single group posts</string>
+    <string name="pref_external">Open outside links in your browser</string>
+    <string name="pref_toasts">Show a banner when something is blocked</string>
+    <string name="sec_blocking_note">Feeds, Reels, Watch, Stories, Explore, and other people\'s profiles are always blocked. These switches only fine-tune the edges.</string>
+
+    <string name="sec_site">Site mode</string>
+    <string name="pref_desktop_fb">Desktop site for Facebook</string>
+    <string name="pref_desktop_ig">Desktop site for Instagram</string>
+    <string name="pref_width">Desktop page width</string>
+    <string name="sec_site_note">Facebook\'s mobile site refuses to show Messenger, so Facebook uses the desktop site. Page width controls how much the desktop layout is shrunk to fit the phone. Narrower means bigger text. You can also pinch to zoom.</string>
+
+    <string-array name="width_labels">
+        <item>Narrow (600)</item>
+        <item>Compact (680)</item>
+        <item>Balanced (760)</item>
+        <item>Roomy (840)</item>
+        <item>Full desktop (980)</item>
+    </string-array>
+    <string-array name="width_values">
+        <item>600</item>
+        <item>680</item>
+        <item>760</item>
+        <item>840</item>
+        <item>980</item>
+    </string-array>
+</resources>
