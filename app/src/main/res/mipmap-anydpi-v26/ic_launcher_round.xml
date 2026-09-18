@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- The artwork is scaled to sit inside the 72dp safe zone, so the whole
+         design survives whatever shape the launcher masks it to. The flat
+         colour behind it matches the artwork's own edges. -->
     <background android:drawable="@color/icon_bg" />
-    <foreground android:drawable="@drawable/ic_launcher_foreground" />
-    <monochrome android:drawable="@drawable/ic_launcher_foreground" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
 </adaptive-icon>

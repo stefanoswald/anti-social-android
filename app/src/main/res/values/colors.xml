@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="accent">#FF7A45</color>
-    <color name="icon_bg">#11182C</color>
+    <!-- Sampled from the edges of the icon artwork so the adaptive icon's
+         background is seamless with it. -->
+    <color name="icon_bg">#021B58</color>
 </resources>
