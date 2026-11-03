@@ -6,7 +6,10 @@ import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.View
+import android.webkit.CookieManager
 import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -18,6 +21,7 @@ import androidx.core.content.ContextCompat
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.snackbar.Snackbar
+import com.google.android.material.tabs.TabLayout
 import com.stefanoswald.antisocial.databinding.ActivityMainBinding
 
 class MainActivity : AppCompatActivity(), TabController.Callbacks,
@@ -25,9 +29,24 @@ class MainActivity : AppCompatActivity(), TabController.Callbacks,
 
     private lateinit var binding: ActivityMainBinding
     private lateinit var settings: AppSettings
+    /** Which posts are yours. Shared by every tab. */
+    private lateinit var ownership: OwnershipChecker
 
     private val controllers = LinkedHashMap<String, TabController>()
+    private var currentGroup: TabGroup = TabGroup.MESSAGES
     private var currentTab: WebTab = WebTab.FACEBOOK_MESSAGES
+    /** Which page each two-page tab is showing (Alerts or My Posts). */
+    private val pageByGroup = HashMap<TabGroup, WebTab>()
+    /** Set while the page switch is being filled in, so that does not count as a tap. */
+    private var fillingPageTabs = false
+    /** Set while the bottom bar is moved by code, so that does not count as a tap. */
+    private var syncingNav = false
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var configPushPending = false
+    private var lastIdentityRefresh = 0L
+    private var lookingUpUsername = false
+    private var lastUsernameLookup = 0L
 
     /** Set while the system file picker is open, for the page waiting on it. */
     private var pendingFileCallback: ValueCallback<Array<Uri>>? = null
@@ -39,10 +58,14 @@ class MainActivity : AppCompatActivity(), TabController.Callbacks,
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         settings = AppSettings(this)
+        ownership = OwnershipChecker(this)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
         settings.registerListener(this)
+        // New posts learned as yours go into every page's settings, in one
+        // batch, a moment later.
+        ownership.onChange = { scheduleConfigPush() }
 
         filePicker = registerForActivityResult(
             ActivityResultContracts.StartActivityForResult()
@@ -72,9 +95,24 @@ class MainActivity : AppCompatActivity(), TabController.Callbacks,
         binding.moreButton.setOnClickListener { showMoreMenu(it) }
 
         binding.bottomNav.setOnItemSelectedListener { item ->
-            select(WebTab.byId(tabIdForMenu(item.itemId)))
+            if (!syncingNav) selectGroup(TabGroup.byMenu(item.itemId))
             true
         }
+
+        binding.pageTabs.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
+            override fun onTabSelected(tab: TabLayout.Tab) {
+                if (fillingPageTabs) return
+                val page = tab.tag as? WebTab ?: return
+                pageByGroup[currentGroup] = page
+                select(page)
+            }
+
+            override fun onTabUnselected(tab: TabLayout.Tab) = Unit
+
+            override fun onTabReselected(tab: TabLayout.Tab) {
+                controller(currentTab).goHome()
+            }
+        })
         binding.bottomNav.setOnItemReselectedListener {
             // Tapping the tab you are already on jumps back to its home page.
             controller(currentTab).goHome()
@@ -90,8 +128,12 @@ class MainActivity : AppCompatActivity(), TabController.Callbacks,
             }
         })
 
-        val restored = savedInstanceState?.getString(STATE_TAB)
-        select(WebTab.byId(restored ?: WebTab.FACEBOOK_MESSAGES.id))
+        val restored = WebTab.byId(savedInstanceState?.getString(STATE_TAB) ?: WebTab.FACEBOOK_MESSAGES.id)
+        val group = TabGroup.containing(restored)
+        pageByGroup[group] = restored
+        selectGroup(group)
+
+        refreshIdentity(force = true)
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -101,6 +143,9 @@ class MainActivity : AppCompatActivity(), TabController.Callbacks,
 
     override fun onDestroy() {
         settings.unregisterListener(this)
+        ownership.onChange = null
+        ownership.shutdown()
+        mainHandler.removeCallbacksAndMessages(null)
         controllers.values.forEach { it.destroy() }
         controllers.clear()
         super.onDestroy()
@@ -108,9 +153,38 @@ class MainActivity : AppCompatActivity(), TabController.Callbacks,
 
     // MARK: - Tabs
 
-    /** One controller per tab, kept alive so switching tabs never reloads. */
+    /** One controller per page, kept alive so switching never reloads. */
     private fun controller(tab: WebTab): TabController = controllers.getOrPut(tab.id) {
-        TabController(this, tab, settings, this)
+        TabController(this, tab, settings, ownership, this)
+    }
+
+    /** A bottom-bar tab. Shows the page it was last on. */
+    private fun selectGroup(group: TabGroup) {
+        currentGroup = group
+        val page = pageByGroup[group] ?: group.pages.first()
+
+        // The page switch, on the tabs that hold more than one page.
+        fillingPageTabs = true
+        binding.pageTabs.removeAllTabs()
+        if (group.pages.size > 1) {
+            for (item in group.pages) {
+                val tab = binding.pageTabs.newTab().setText(item.shortTitleRes).setTag(item)
+                binding.pageTabs.addTab(tab, item == page)
+            }
+            binding.pageTabs.visibility = View.VISIBLE
+        } else {
+            binding.pageTabs.visibility = View.GONE
+        }
+        fillingPageTabs = false
+
+        // Keep the highlighted tab in step after a restore.
+        if (binding.bottomNav.selectedItemId != group.menuId) {
+            syncingNav = true
+            binding.bottomNav.selectedItemId = group.menuId
+            syncingNav = false
+        }
+        binding.tabTitle.setText(group.titleRes)
+        select(page)
     }
 
     private fun select(tab: WebTab) {
@@ -123,28 +197,8 @@ class MainActivity : AppCompatActivity(), TabController.Callbacks,
         controller.loadHomeIfNeeded()
 
         controller.tabLabel = getString(tab.titleRes)
-        binding.tabTitle.setText(tab.titleRes)
-        // Keep the highlighted tab in step after a restore.
-        val menuId = menuIdForTab(tab)
-        if (binding.bottomNav.selectedItemId != menuId) binding.bottomNav.selectedItemId = menuId
         binding.composeButton.visibility = if (settings.allowPosting) View.VISIBLE else View.GONE
         refreshChrome(controller)
-    }
-
-    private fun menuIdForTab(tab: WebTab): Int = when (tab) {
-        WebTab.FACEBOOK_MESSAGES -> R.id.nav_messages
-        WebTab.FACEBOOK_MARKETPLACE -> R.id.nav_marketplace
-        WebTab.FACEBOOK_NOTIFICATIONS -> R.id.nav_alerts
-        WebTab.INSTAGRAM_INBOX -> R.id.nav_ig_inbox
-        WebTab.INSTAGRAM_NOTIFICATIONS -> R.id.nav_ig_alerts
-    }
-
-    private fun tabIdForMenu(itemId: Int): String = when (itemId) {
-        R.id.nav_messages -> WebTab.FACEBOOK_MESSAGES.id
-        R.id.nav_marketplace -> WebTab.FACEBOOK_MARKETPLACE.id
-        R.id.nav_alerts -> WebTab.FACEBOOK_NOTIFICATIONS.id
-        R.id.nav_ig_inbox -> WebTab.INSTAGRAM_INBOX.id
-        else -> WebTab.INSTAGRAM_NOTIFICATIONS.id
     }
 
     // MARK: - Menus
@@ -202,14 +256,23 @@ class MainActivity : AppCompatActivity(), TabController.Callbacks,
         controller(currentTab).pageMap { map ->
             val log = BlockLog.recent()
             val body = buildString {
-                append(getString(R.string.diagnostics_page)).append("\n\n")
-                append(map).append("\n\n")
+                // Who the app thinks you are comes first, so it is never cut off.
+                append(
+                    getString(
+                        R.string.accounts_line,
+                        identityLabel(settings.facebookUsername, settings.facebookUserId),
+                        identityLabel(settings.instagramUsername, settings.instagramUserId)
+                    )
+                ).append("\n")
+                append(getString(R.string.known_posts, ownership.knownCount)).append("\n\n")
                 append(getString(R.string.diagnostics_blocks)).append("\n")
                 if (log.isEmpty()) {
                     append(getString(R.string.diagnostics_none))
                 } else {
                     log.forEach { append("${it.reason}\t${it.tabTitle}\t${it.url}\n") }
                 }
+                append("\n\n").append(getString(R.string.diagnostics_page)).append("\n\n")
+                append(map)
             }
 
             AlertDialog.Builder(this)
@@ -223,6 +286,7 @@ class MainActivity : AppCompatActivity(), TabController.Callbacks,
                     startActivity(Intent.createChooser(share, getString(R.string.share)))
                 }
                 .setNegativeButton(R.string.close, null)
+                .setNeutralButton(R.string.forget_posts) { _, _ -> ownership.forgetAll() }
                 .show()
         }
     }
@@ -307,9 +371,77 @@ class MainActivity : AppCompatActivity(), TabController.Callbacks,
         if (controller.tab == currentTab) refreshChrome(controller)
     }
 
+    override fun onPageFinished() {
+        refreshIdentity(force = false)
+    }
+
     private fun refreshChrome(controller: TabController) {
         binding.progress.visibility = if (controller.isLoading) View.VISIBLE else View.GONE
+        binding.checkingOverlay.visibility = if (controller.isCheckingOwner) View.VISIBLE else View.GONE
         binding.pageHost.text = hostLabel(controller.currentUrl)
+    }
+
+    private fun identityLabel(username: String, id: String): String {
+        val parts = listOf(username, id).filter { it.isNotEmpty() }
+        return if (parts.isEmpty()) getString(R.string.not_known_yet) else parts.joinToString(" · ")
+    }
+
+    // MARK: - Who you are
+
+    /**
+     * Reads your account numbers from the sites' own login cookies (c_user on
+     * Facebook, ds_user_id on Instagram). Links often name you by number, so
+     * the app needs both your username and your number to spot your posts.
+     */
+    private fun refreshIdentity(force: Boolean) {
+        val now = System.currentTimeMillis()
+        if (!force && now - lastIdentityRefresh < 20_000) return
+        lastIdentityRefresh = now
+
+        cookieValue("https://www.facebook.com", "c_user")?.let { id ->
+            if (AccessPolicy.isDigits(id) && settings.facebookUserId != id) settings.facebookUserId = id
+        }
+        cookieValue("https://www.instagram.com", "ds_user_id")?.let { id ->
+            if (AccessPolicy.isDigits(id) && settings.instagramUserId != id) settings.instagramUserId = id
+        }
+
+        // Knows your Facebook number but not your username yet: look it up on
+        // your own profile page.
+        // Accounts without a custom username have nothing to find, so this
+        // runs at most every few hours.
+        val facebookId = settings.facebookUserId
+        if (settings.facebookUsername.isEmpty() && facebookId.isNotEmpty() && !lookingUpUsername &&
+            now - lastUsernameLookup > USERNAME_LOOKUP_GAP_MS
+        ) {
+            lookingUpUsername = true
+            lastUsernameLookup = now
+            ownership.facebookUsername(facebookId) { name ->
+                lookingUpUsername = false
+                if (name != null && settings.facebookUsername.isEmpty()) settings.facebookUsername = name
+            }
+        }
+    }
+
+    private fun cookieValue(url: String, name: String): String? {
+        val header = try {
+            CookieManager.getInstance().getCookie(url)
+        } catch (e: Exception) {
+            null
+        } ?: return null
+        return header.split(";")
+            .map { it.trim() }
+            .firstOrNull { it.startsWith("$name=") }
+            ?.substringAfter("=")
+            ?.takeIf { it.isNotEmpty() }
+    }
+
+    private fun scheduleConfigPush() {
+        if (configPushPending) return
+        configPushPending = true
+        mainHandler.postDelayed({
+            configPushPending = false
+            controllers.values.forEach { it.applySettings() }
+        }, 1000)
     }
 
     private fun hostLabel(url: String?): String {
@@ -329,6 +461,7 @@ class MainActivity : AppCompatActivity(), TabController.Callbacks,
 
     companion object {
         private const val STATE_TAB = "currentTab"
+        private const val USERNAME_LOOKUP_GAP_MS = 6 * 3_600_000L
     }
 }
 

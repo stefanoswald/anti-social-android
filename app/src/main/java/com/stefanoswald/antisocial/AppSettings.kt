@@ -20,6 +20,25 @@ class AppSettings(context: Context) {
         get() = prefs.getString(KEY_IG_USERNAME, "").orEmpty().trim()
         set(value) = prefs.edit().putString(KEY_IG_USERNAME, value.trim()).apply()
 
+    /** Your Facebook account number, read from Facebook's own login cookie. */
+    var facebookUserId: String
+        get() = prefs.getString(KEY_FB_ID, "").orEmpty().trim()
+        set(value) = prefs.edit().putString(KEY_FB_ID, value.trim()).apply()
+
+    /** Your Instagram account number, read the same way. */
+    var instagramUserId: String
+        get() = prefs.getString(KEY_IG_ID, "").orEmpty().trim()
+        set(value) = prefs.edit().putString(KEY_IG_ID, value.trim()).apply()
+
+    /**
+     * Someone else's post, Reel, video, or story opens when you tap it, so you
+     * can read it and reply. Moving on to the next one by swiping or autoplay
+     * stays blocked. Off means only your own posts open.
+     */
+    var openTappedPosts: Boolean
+        get() = prefs.getBoolean(KEY_OPEN_TAPPED, true)
+        set(value) = prefs.edit().putBoolean(KEY_OPEN_TAPPED, value).apply()
+
     /**
      * Facebook's mobile site refuses to show Messenger and bounces to the feed,
      * so Facebook gets the desktop site by default.
@@ -31,16 +50,6 @@ class AppSettings(context: Context) {
     var desktopModeInstagram: Boolean
         get() = prefs.getBoolean(KEY_DESKTOP_IG, false)
         set(value) = prefs.edit().putBoolean(KEY_DESKTOP_IG, value).apply()
-
-    /** Lets a single Reel open from a notification, to answer comments on it. */
-    var allowReelPermalinks: Boolean
-        get() = prefs.getBoolean(KEY_REELS, false)
-        set(value) = prefs.edit().putBoolean(KEY_REELS, value).apply()
-
-    /** Lets single group posts open from notifications. Group feeds stay blocked. */
-    var allowGroupPosts: Boolean
-        get() = prefs.getBoolean(KEY_GROUP_POSTS, true)
-        set(value) = prefs.edit().putBoolean(KEY_GROUP_POSTS, value).apply()
 
     /** Turns on the compose button. */
     var allowPosting: Boolean
@@ -87,9 +96,10 @@ class AppSettings(context: Context) {
     fun policyOptions(): PolicyOptions = PolicyOptions(
         facebookUsername = facebookUsername,
         instagramUsername = instagramUsername,
-        allowReelPermalinks = allowReelPermalinks,
-        allowGroupPosts = allowGroupPosts,
-        allowPosting = allowPosting
+        facebookUserId = facebookUserId,
+        instagramUserId = instagramUserId,
+        allowPosting = allowPosting,
+        openTappedPosts = openTappedPosts
     )
 
     fun registerListener(listener: SharedPreferences.OnSharedPreferenceChangeListener) {
@@ -103,10 +113,11 @@ class AppSettings(context: Context) {
     companion object {
         const val KEY_FB_USERNAME = "facebookUsername"
         const val KEY_IG_USERNAME = "instagramUsername"
+        const val KEY_FB_ID = "facebookUserId"
+        const val KEY_IG_ID = "instagramUserId"
+        const val KEY_OPEN_TAPPED = "openTappedPosts"
         const val KEY_DESKTOP_FB = "desktopModeFacebook"
         const val KEY_DESKTOP_IG = "desktopModeInstagram"
-        const val KEY_REELS = "allowReelPermalinks"
-        const val KEY_GROUP_POSTS = "allowGroupPosts"
         const val KEY_POSTING = "allowPosting"
         const val KEY_HIDE = "hideDistractions"
         const val KEY_TOASTS = "showBlockToasts"

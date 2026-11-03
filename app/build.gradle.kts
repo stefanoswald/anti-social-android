@@ -11,8 +11,22 @@ android {
         applicationId = "com.stefanoswald.antisocial"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 3
+        versionName = "1.2"
+    }
+
+    signingConfigs {
+        // A fixed debug key, kept in the repo on purpose. GitHub builds the
+        // APK on a fresh machine every time, and without this each build would
+        // be signed with a brand-new key, so an update could never install
+        // over the app already on the phone. It is a throwaway key for
+        // sideloading, not a secret.
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
 
     buildTypes {

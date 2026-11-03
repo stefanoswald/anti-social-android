@@ -9,15 +9,93 @@ enum class SiteKind { FACEBOOK, INSTAGRAM, OTHER }
 data class PolicyOptions(
     val facebookUsername: String = "",
     val instagramUsername: String = "",
-    val allowReelPermalinks: Boolean = false,
-    val allowGroupPosts: Boolean = true,
+    /**
+     * Your numeric account IDs, read from each site's own login cookie. Links
+     * often name you by number instead of by username.
+     */
+    val facebookUserId: String = "",
+    val instagramUserId: String = "",
     /**
      * Lets you publish: the composer, Marketplace listings, creating a Story,
-     * and Go Live. Watching other people's Reels and Stories stays blocked
-     * either way, so this opens the outbox, not the feed.
+     * and Go Live.
      */
-    val allowPosting: Boolean = true
+    val allowPosting: Boolean = true,
+    /**
+     * Other people's posts, Reels, and stories open when you tap them. The
+     * next one never opens by itself: swiping or autoplay into it is blocked.
+     * When this is off, only your own posts open, plus everything inside
+     * your groups.
+     */
+    val openTappedPosts: Boolean = true
+) {
+    /** Every name the sites might use for you, lowercased. */
+    val ownIdentity: OwnIdentity
+        get() = OwnIdentity(
+            facebook = names(facebookUsername, facebookUserId),
+            instagram = names(instagramUsername, instagramUserId)
+        )
+
+    private fun names(vararg values: String): Set<String> =
+        values.map { it.trim().lowercase() }.filter { it.isNotEmpty() }.toSet()
+}
+
+/** Who you are on each site, as lowercased usernames and numeric IDs. */
+data class OwnIdentity(
+    val facebook: Set<String> = emptySet(),
+    val instagram: Set<String> = emptySet()
+) {
+    fun names(site: SiteKind): Set<String> = when (site) {
+        SiteKind.FACEBOOK -> facebook
+        SiteKind.INSTAGRAM -> instagram
+        SiteKind.OTHER -> emptySet()
+    }
+}
+
+/** What kind of single thing a link opens. */
+enum class PostKind {
+    FACEBOOK_REEL, FACEBOOK_VIDEO, FACEBOOK_PHOTO, FACEBOOK_POST, FACEBOOK_GROUP_POST, FACEBOOK_STORY,
+    INSTAGRAM_POST, INSTAGRAM_REEL,
+    /** instagram.com/reels/<code>/ opens the swipeable Reels player. */
+    INSTAGRAM_REELS_PLAYER,
+    INSTAGRAM_STORY, INSTAGRAM_HIGHLIGHT;
+
+    /** Reels and videos, the things a player swipes through. */
+    val isVideo: Boolean
+        get() = this == FACEBOOK_REEL || this == FACEBOOK_VIDEO || this == INSTAGRAM_REEL || this == INSTAGRAM_REELS_PLAYER
+
+    val isStory: Boolean
+        get() = this == FACEBOOK_STORY || this == INSTAGRAM_STORY || this == INSTAGRAM_HIGHLIGHT
+}
+
+/** One post, Reel, video, photo, or story, named so the app can check whose it is. */
+data class PostRef(
+    val site: SiteKind,
+    /**
+     * A stable name for the post, like "fb:video:1299494788874394" or
+     * "ig:DefPxYVO9YH". The app remembers your posts by this.
+     */
+    val key: String,
+    /** The page to fetch to find out who made the post. */
+    val lookupUrl: String,
+    val kind: PostKind,
+    /**
+     * Set when the link itself names someone else as the owner. Such a post
+     * opens only if you tapped it, or if the app already knows it is yours
+     * (a collab, say).
+     */
+    val otherOwner: String? = null
 )
+
+/** What a link to a single post says about itself. */
+data class PostLink(
+    val ref: PostRef,
+    /** The username or ID in the link, lowercased, if the link names one. */
+    val owner: String?,
+    /** Posts and photos inside a group. Everything in your groups opens. */
+    val inGroup: Boolean = false
+) {
+    val kind: PostKind get() = ref.kind
+}
 
 /** What to do with a navigation. */
 sealed class PolicyDecision {
@@ -29,10 +107,17 @@ sealed class PolicyDecision {
 
     /** The link leaves Facebook and Instagram. The app decides what to do. */
     data class External(val url: String) : PolicyDecision()
+
+    /**
+     * A single post. It opens if it is yours, or if you tapped it. Anything
+     * else (the next Reel, autoplay) is blocked.
+     */
+    data class Verify(val ref: PostRef) : PolicyDecision()
 }
 
 /**
- * The allowlist. Everything not explicitly allowed here is blocked.
+ * The rules. Everything that is a feed is blocked; the rest is allowed only
+ * when it is listed here.
  *
  * The rules work on URL paths, so they hold no matter what the page looks
  * like. Element hiding (see [Injected]) is only cosmetic on top of this.
@@ -99,6 +184,74 @@ class AccessPolicy(var options: PolicyOptions = PolicyOptions()) {
         }
     }
 
+    /**
+     * When a link itself proves the post is yours (your username or ID is in
+     * it), returns the post's key so later bare links to the same post open
+     * right away.
+     */
+    fun ownedPostKey(rawUrl: String): String? {
+        val link = postLink(rawUrl) ?: return null
+        val owner = link.owner ?: return null
+        return if (isOwn(owner, link.ref.site)) link.ref.key else null
+    }
+
+    /**
+     * Pages that list only your own posts: your Reels and Videos tabs on
+     * Facebook, and your grid on Instagram. Every post linked from one of
+     * these is yours, even when the link does not say so.
+     */
+    fun isOwnPostGrid(rawUrl: String): Boolean {
+        val uri = try { Uri.parse(rawUrl) } catch (e: Exception) { return false }
+        val segments = segments(uri)
+        return when (siteFor(rawUrl)) {
+            SiteKind.FACEBOOK -> {
+                if (segments.firstOrNull() == "profile.php") {
+                    val id = queryValue(uri, "id") ?: return false
+                    if (!isOwn(id, SiteKind.FACEBOOK)) return false
+                    val tab = (queryValue(uri, "sk") ?: "").lowercase()
+                    tab.startsWith("reels") || tab.startsWith("videos")
+                } else {
+                    segments.size >= 2 && isOwn(segments[0], SiteKind.FACEBOOK) &&
+                        (segments[1] == "reels" || segments[1] == "videos")
+                }
+            }
+            SiteKind.INSTAGRAM -> {
+                val first = segments.firstOrNull() ?: return false
+                isOwn(first, SiteKind.INSTAGRAM) && (segments.size == 1 || segments[1] == "reels")
+            }
+            SiteKind.OTHER -> false
+        }
+    }
+
+    // MARK: - Your posts
+
+    private fun isOwn(name: String, site: SiteKind): Boolean {
+        val lowered = name.lowercase()
+        return lowered.isNotEmpty() && lowered in options.ownIdentity.names(site)
+    }
+
+    /**
+     * Whether the app knows you well enough to say that [owner] is not you.
+     * A number can only be ruled out once your ID is known, and a name once
+     * your username is known.
+     */
+    private fun canRuleOut(owner: String, site: SiteKind): Boolean {
+        val names = options.ownIdentity.names(site)
+        return if (isDigits(owner)) names.any { isDigits(it) } else names.any { !isDigits(it) }
+    }
+
+    private fun decidePost(link: PostLink): PolicyDecision {
+        // Everything inside your groups opens.
+        if (link.inGroup) return PolicyDecision.Allow
+        val site = link.ref.site
+        val owner = link.owner
+        if (owner != null) {
+            if (isOwn(owner, site)) return PolicyDecision.Allow
+            if (canRuleOut(owner, site)) return PolicyDecision.Verify(link.ref.copy(otherOwner = owner))
+        }
+        return PolicyDecision.Verify(link.ref)
+    }
+
     // MARK: - Facebook
 
     private fun decideFacebook(uri: Uri, inPage: Boolean): PolicyDecision {
@@ -107,18 +260,26 @@ class AccessPolicy(var options: PolicyOptions = PolicyOptions()) {
 
         if (first == "l.php") return shimDecision(uri)
 
+        // One post, Reel, video, photo, or story. Checked before anything else
+        // because some of these sit under segments that are otherwise always
+        // allowed (photo, permalink.php) or always blocked (stories).
+        facebookPostLink(uri)?.let { return decidePost(it) }
+
         if (first in FACEBOOK_ALLOWED_SEGMENTS) return PolicyDecision.Allow
 
         // Accounts without a vanity name live at /profile.php?id=<number>.
-        if (first == "profile.php" && options.facebookUsername.isNotEmpty() &&
-            queryValue(uri, "id") == options.facebookUsername
-        ) {
-            return PolicyDecision.Allow
+        if (first == "profile.php") {
+            val id = queryValue(uri, "id")
+            if (id != null && isOwn(id, SiteKind.FACEBOOK)) return PolicyDecision.Allow
         }
+
+        // Groups: any one group is fine, with everything in it. The mixed
+        // feed of all your groups and the suggestions are not.
+        if (first == "groups") return decideGroups(uri, segments)
 
         // Publishing. These sit underneath segments that are otherwise
         // blocked, so they have to be checked before the blocklist.
-        // Creating a Story is allowed; watching other people's is not.
+        // Creating a Story is allowed; the Stories feed is not.
         // Going live is allowed; the Live directory of other people's
         // broadcasts is not.
         if (options.allowPosting && segments.size >= 2) {
@@ -126,53 +287,36 @@ class AccessPolicy(var options: PolicyOptions = PolicyOptions()) {
             if (pair in FACEBOOK_PUBLISH_PATHS) return PolicyDecision.Allow
         }
 
+        // Your own story archive.
+        if (first == "stories" && segments.getOrNull(1) == "archive") return PolicyDecision.Allow
+
         FACEBOOK_BLOCKED_SEGMENTS[first]?.let { return PolicyDecision.Block(it) }
 
         when (first) {
-            "reel" -> {
-                if (segments.size >= 2 && options.allowReelPermalinks) return PolicyDecision.Allow
-                return PolicyDecision.Block("Reels")
-            }
-
-            "watch" -> {
-                // /watch/?v=123 is one video. /watch/ alone is the video feed.
-                if (queryValue(uri, "v") != null) return PolicyDecision.Allow
-                return PolicyDecision.Block("Watch")
-            }
-
-            "video", "videos" -> {
-                if (segments.size >= 2 || queryValue(uri, "v") != null) return PolicyDecision.Allow
-                return PolicyDecision.Block("Video feed")
-            }
-
-            "groups" -> {
-                // /groups/<id>/posts/<id> and /groups/<id>/permalink/<id> are
-                // single posts. Anything shorter is a feed.
-                if (segments.size >= 4 && segments[2] in setOf("posts", "permalink") &&
-                    options.allowGroupPosts
-                ) {
-                    return PolicyDecision.Allow
-                }
-                return PolicyDecision.Block("Groups")
-            }
+            "reel" -> return PolicyDecision.Block("Reels")
+            // /watch/?v=123 is one video and was handled above. /watch/ alone
+            // is the video feed.
+            "watch" -> return PolicyDecision.Block("Watch")
+            "video", "videos", "video.php" -> return PolicyDecision.Block("Video feed")
         }
 
         // Everything left looks like /<username>/... which is a profile.
-        val isOwnProfile = options.facebookUsername.isNotEmpty() &&
-            first == options.facebookUsername.lowercase()
+        // Yours is open, with all its tabs (posts, Reels, videos, photos).
+        if (isOwn(first, SiteKind.FACEBOOK)) return PolicyDecision.Allow
 
-        if (segments.size >= 2) {
-            return when (segments[1]) {
-                "posts", "permalink", "photos" -> PolicyDecision.Allow
-                // /<user>/videos/<id> is one video. /<user>/videos is a list.
-                "videos" -> if (segments.size >= 3) PolicyDecision.Allow else PolicyDecision.Block("Video list")
-                "reels" -> PolicyDecision.Block("Reels")
-                else -> if (isOwnProfile) PolicyDecision.Allow else PolicyDecision.Block("Profile")
-            }
-        }
-
-        return if (isOwnProfile) PolicyDecision.Allow else PolicyDecision.Block("Profile")
+        return PolicyDecision.Block("Profile")
     }
+
+    private fun decideGroups(uri: Uri, segments: List<String>): PolicyDecision =
+        when (segments.getOrNull(1)) {
+            // facebook.com/groups/ is the mixed feed of all your groups.
+            null -> if (queryValue(uri, "category") == "create") PolicyDecision.Allow
+            else PolicyDecision.Block("Groups feed")
+            "feed" -> PolicyDecision.Block("Groups feed")
+            "discover" -> PolicyDecision.Block("Group suggestions")
+            // joins (your groups), create, and any one group.
+            else -> PolicyDecision.Allow
+        }
 
     // MARK: - Instagram
 
@@ -193,33 +337,22 @@ class AccessPolicy(var options: PolicyOptions = PolicyOptions()) {
             if (inPage || segments[1] in INSTAGRAM_CREATE_STEPS) return PolicyDecision.Allow
         }
 
+        // One post, Reel, or story. This is where you answer comments.
+        instagramPostLink(uri)?.let { return decidePost(it) }
+
         INSTAGRAM_BLOCKED_SEGMENTS[first]?.let { return PolicyDecision.Block(it) }
 
         when (first) {
-            // A single post. This is where you answer comments.
-            "p", "tv" -> return if (segments.size >= 2) PolicyDecision.Allow else PolicyDecision.Block("Feed")
-
-            "reel" -> {
-                if (segments.size >= 2 && options.allowReelPermalinks) return PolicyDecision.Allow
-                return PolicyDecision.Block("Reels")
-            }
+            "reel" -> return PolicyDecision.Block("Reels")
+            "p", "tv" -> return PolicyDecision.Block("Feed")
         }
 
-        // Newer links put the username first: /<user>/p/<code>/ and
-        // /<user>/reel/<code>/. Still a single post.
-        if (segments.size >= 3) {
-            when (segments[1]) {
-                "p", "tv" -> return PolicyDecision.Allow
-                "reel" -> return if (options.allowReelPermalinks) PolicyDecision.Allow
-                else PolicyDecision.Block("Reels")
+        if (isOwn(first, SiteKind.INSTAGRAM)) {
+            // Posts other people tagged you in are their posts. The grid opens
+            // only when their posts open when you tap them.
+            if (segments.getOrNull(1) == "tagged" && !options.openTappedPosts) {
+                return PolicyDecision.Block("Tagged posts")
             }
-        }
-
-        val isOwnProfile = options.instagramUsername.isNotEmpty() &&
-            first == options.instagramUsername.lowercase()
-
-        if (isOwnProfile) {
-            if (segments.size >= 2 && segments[1] == "reels") return PolicyDecision.Block("Reels")
             return PolicyDecision.Allow
         }
 
@@ -255,7 +388,7 @@ class AccessPolicy(var options: PolicyOptions = PolicyOptions()) {
 
         /** First path segments that are always fine on Facebook. */
         private val FACEBOOK_ALLOWED_SEGMENTS = setOf(
-            // The three things this app exists for.
+            // The things this app exists for.
             "messages", "marketplace", "notifications",
             // Login and account plumbing.
             "login", "login.php", "checkpoint", "two_step_verification", "two_factor",
@@ -264,7 +397,8 @@ class AccessPolicy(var options: PolicyOptions = PolicyOptions()) {
             "policy", "legal", "terms", "help", "settings", "logout", "logout.php",
             "accountscenter", "ajax", "api", "async", "rsrc.php", "si", "images",
             "language", "mobile",
-            // Redirect helpers used by notification links.
+            // Redirect helpers used by notification links. Single posts under
+            // these (photo, permalink.php, story.php) are judged as posts first.
             "n", "nd", "share", "permalink.php", "story.php", "photo.php", "photo",
             "comment", "ufi", "a", "notifications.php", "messages.php",
             // Your own creator tools. No feed on these pages.
@@ -311,6 +445,15 @@ class AccessPolicy(var options: PolicyOptions = PolicyOptions()) {
             "profile.php" to "Profile"
         )
 
+        /** First segments that are Facebook features, never usernames. */
+        private val FACEBOOK_ROUTE_SEGMENTS = setOf(
+            "reel", "watch", "video", "videos", "video.php", "groups", "profile.php",
+            "l.php", "media", "sharer", "sharer.php", "plugins", "story", "stories"
+        )
+
+        /** Second segments under /stories/ that are pages, not someone's stories. */
+        private val FACEBOOK_STORY_PAGES = setOf("create", "archive")
+
         private val INSTAGRAM_AUTH_SEGMENTS = setOf(
             "accounts", "challenge", "auth_platform", "oauth", "login", "two_factor",
             "consent", "session", "coming_soon", "logout"
@@ -345,6 +488,13 @@ class AccessPolicy(var options: PolicyOptions = PolicyOptions()) {
             "threads" to "Threads"
         )
 
+        /** Words that sit where a post code would, but are pages, not posts. */
+        private val INSTAGRAM_NON_CODES = setOf("audio", "comments", "liked_by", "embed", "create", "explore")
+
+        private val SHORTCODE = Regex("^[A-Za-z0-9_-]{5,80}$")
+        private val DIGITS = Regex("^[0-9]+$")
+        private val USERNAME = Regex("^[A-Za-z0-9._]{1,30}$")
+
         fun siteFor(rawUrl: String): SiteKind {
             val host = (try { Uri.parse(rawUrl).host } catch (e: Exception) { null } ?: "").lowercase()
             if (hostMatches(host, FACEBOOK_HOSTS)) return SiteKind.FACEBOOK
@@ -371,17 +521,196 @@ class AccessPolicy(var options: PolicyOptions = PolicyOptions()) {
             val name = segments[0]
             // Reject the things a vanity URL can never be.
             if (name.contains(".") || name.length < 3) return null
-            if (FACEBOOK_BLOCKED_SEGMENTS.containsKey(name)) return null
-            if (name in FACEBOOK_ALLOWED_SEGMENTS) return null
+            if (isFacebookRoute(name)) return null
             return name
         }
+
+        /** Describes a link to one post, Reel, video, photo, or story. Null for anything else. */
+        fun postLink(rawUrl: String): PostLink? {
+            val uri = try { Uri.parse(rawUrl) } catch (e: Exception) { return null }
+            return when (siteFor(rawUrl)) {
+                SiteKind.FACEBOOK -> facebookPostLink(uri)
+                SiteKind.INSTAGRAM -> instagramPostLink(uri)
+                SiteKind.OTHER -> null
+            }
+        }
+
+        fun isFacebookRoute(segment: String): Boolean {
+            val s = segment.lowercase()
+            return s in FACEBOOK_ROUTE_SEGMENTS || s in FACEBOOK_ALLOWED_SEGMENTS ||
+                FACEBOOK_BLOCKED_SEGMENTS.containsKey(s)
+        }
+
+        fun isInstagramRoute(segment: String): Boolean {
+            val s = segment.lowercase()
+            return s in setOf("p", "reel", "tv", "linkshim", "create") || s in INSTAGRAM_ALLOWED_SEGMENTS ||
+                INSTAGRAM_BLOCKED_SEGMENTS.containsKey(s)
+        }
+
+        private fun facebookPostLink(uri: Uri): PostLink? {
+            val raw = rawSegments(uri)
+            val first = raw.firstOrNull()?.lowercase() ?: return null
+            val lookup = facebookLookupUrl(uri)
+
+            fun link(key: String, owner: String?, kind: PostKind, inGroup: Boolean = false) = PostLink(
+                ref = PostRef(SiteKind.FACEBOOK, key, lookup, kind),
+                owner = owner?.takeIf { it.isNotEmpty() }?.lowercase(),
+                inGroup = inGroup
+            )
+
+            when (first) {
+                "reel" -> {
+                    if (raw.size < 2 || !isDigits(raw[1])) return null
+                    return link("fb:video:${raw[1]}", null, PostKind.FACEBOOK_REEL)
+                }
+                "watch", "video.php" -> {
+                    val video = queryValue(uri, "v")
+                    if (video == null || !isDigits(video)) return null
+                    return link("fb:video:$video", null, PostKind.FACEBOOK_VIDEO)
+                }
+                "videos", "video" -> {
+                    if (raw.size < 2 || !isDigits(raw[1])) return null
+                    return link("fb:video:${raw[1]}", null, PostKind.FACEBOOK_VIDEO)
+                }
+                "photo", "photo.php" -> {
+                    val photo = queryValue(uri, "fbid")
+                    if (photo == null || !isDigits(photo)) return null
+                    val set = queryValue(uri, "set") ?: ""
+                    // Photos in a group carry the group (idorvanity) or a group set.
+                    val inGroup = !queryValue(uri, "idorvanity").isNullOrEmpty() ||
+                        set.startsWith("g.") || set.startsWith("gm.")
+                    return link("fb:photo:$photo", ownerOfPhotoSet(set), PostKind.FACEBOOK_PHOTO, inGroup)
+                }
+                "permalink.php", "story.php" -> {
+                    val story = queryValue(uri, "story_fbid")
+                    if (story.isNullOrEmpty()) return null
+                    return link("fb:post:$story", queryValue(uri, "id"), PostKind.FACEBOOK_POST)
+                }
+                "groups" -> {
+                    if (raw.size < 4 || raw[2].lowercase() !in setOf("posts", "permalink")) return null
+                    return link(
+                        "fb:group:${raw[1].lowercase()}:${raw[3]}", null, PostKind.FACEBOOK_GROUP_POST,
+                        inGroup = true
+                    )
+                }
+                "stories" -> {
+                    // /stories/<owner id>/<story>/ is one person's stories.
+                    if (raw.size < 2 || raw[1].lowercase() in FACEBOOK_STORY_PAGES) return null
+                    val bucket = raw[1]
+                    return link("fb:story:${bucket.lowercase()}", bucket, PostKind.FACEBOOK_STORY)
+                }
+            }
+
+            // /<username>/posts/<id>, /<username>/videos/<id>, /<username>/photos/.../<id>
+            if (raw.size < 3 || isFacebookRoute(first)) return null
+            return when (raw[1].lowercase()) {
+                "posts", "permalink" -> link("fb:post:${raw[2]}", first, PostKind.FACEBOOK_POST)
+                "videos" -> raw.drop(2).lastOrNull { isDigits(it) }
+                    ?.let { link("fb:video:$it", first, PostKind.FACEBOOK_VIDEO) }
+                "photos" -> raw.drop(2).lastOrNull { isDigits(it) }
+                    ?.let { link("fb:photo:$it", first, PostKind.FACEBOOK_PHOTO) }
+                else -> null
+            }
+        }
+
+        /**
+         * Photo links carry the album they came from. "pb.<owner id>.<...>" is
+         * the owner's profile photos, which names the owner.
+         */
+        private fun ownerOfPhotoSet(set: String?): String? {
+            val parts = set?.split(".") ?: return null
+            if (parts.size < 2 || parts[0] != "pb") return null
+            return parts[1].takeIf { isDigits(it) }
+        }
+
+        /**
+         * The post's own page without tracking clutter, on the desktop host,
+         * which is the version that names the owner in its header.
+         */
+        private fun facebookLookupUrl(uri: Uri): String {
+            val keep = listOf("v", "fbid", "story_fbid", "id", "set")
+            val query = keep.mapNotNull { name ->
+                queryValue(uri, name)?.let { "$name=${Uri.encode(it)}" }
+            }.joinToString("&")
+            val host = (uri.host ?: "www.facebook.com").lowercase().let {
+                if (it == "facebook.com" || it == "m.facebook.com" || it == "mbasic.facebook.com" ||
+                    it == "web.facebook.com"
+                ) "www.facebook.com" else it
+            }
+            val path = uri.encodedPath ?: "/"
+            return "https://$host$path" + if (query.isEmpty()) "" else "?$query"
+        }
+
+        private fun instagramPostLink(uri: Uri): PostLink? {
+            val raw = rawSegments(uri)
+            val first = raw.firstOrNull()?.lowercase() ?: return null
+
+            fun link(code: String, owner: String?, kind: PostKind) = PostLink(
+                ref = PostRef(SiteKind.INSTAGRAM, "ig:$code", "https://www.instagram.com/p/$code/", kind),
+                owner = owner?.lowercase()
+            )
+
+            if (first == "stories") {
+                if (raw.size < 2) return null
+                if (raw[1].lowercase() == "highlights") {
+                    if (raw.size < 3 || !isDigits(raw[2])) return null
+                    val id = raw[2]
+                    return PostLink(
+                        ref = PostRef(
+                            SiteKind.INSTAGRAM, "ig:highlight:$id",
+                            "https://www.instagram.com/stories/highlights/$id/", PostKind.INSTAGRAM_HIGHLIGHT
+                        ),
+                        owner = null
+                    )
+                }
+                val user = raw[1]
+                if (!USERNAME.matches(user)) return null
+                return PostLink(
+                    ref = PostRef(
+                        SiteKind.INSTAGRAM, "ig:story:${user.lowercase()}",
+                        "https://www.instagram.com/stories/${user.lowercase()}/", PostKind.INSTAGRAM_STORY
+                    ),
+                    owner = user.lowercase()
+                )
+            }
+
+            if (first in setOf("p", "tv", "reel", "reels")) {
+                if (raw.size < 2 || !isShortcode(raw[1])) return null
+                val kind = when (first) {
+                    "reel" -> PostKind.INSTAGRAM_REEL
+                    "reels" -> PostKind.INSTAGRAM_REELS_PLAYER
+                    else -> PostKind.INSTAGRAM_POST
+                }
+                return link(raw[1], null, kind)
+            }
+
+            // Newer links put the username first: /<user>/p/<code>/ and
+            // /<user>/reel/<code>/.
+            if (raw.size < 3 || !isShortcode(raw[2]) || isInstagramRoute(first)) return null
+            return when (raw[1].lowercase()) {
+                "p", "tv" -> link(raw[2], first, PostKind.INSTAGRAM_POST)
+                "reel" -> link(raw[2], first, PostKind.INSTAGRAM_REEL)
+                else -> null
+            }
+        }
+
+        private fun isShortcode(text: String): Boolean =
+            SHORTCODE.matches(text) && text.lowercase() !in INSTAGRAM_NON_CODES
+
+        fun isDigits(text: String): Boolean = DIGITS.matches(text)
 
         private fun hostMatches(host: String, domains: List<String>): Boolean =
             domains.any { host == it || host.endsWith(".$it") }
 
         /** Lowercased, non-empty path segments. */
-        fun segments(uri: Uri): List<String> =
-            (uri.path ?: "").lowercase().split("/").filter { it.isNotEmpty() }
+        fun segments(uri: Uri): List<String> = rawSegments(uri).map { it.lowercase() }
+
+        /**
+         * Path segments as written. Instagram post codes and some Facebook
+         * post IDs are case-sensitive, so these are not lowercased.
+         */
+        fun rawSegments(uri: Uri): List<String> =
+            (uri.path ?: "").split("/").filter { it.isNotEmpty() }
 
         fun queryValue(uri: Uri, name: String): String? = try {
             uri.getQueryParameter(name)

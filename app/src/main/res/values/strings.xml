@@ -7,6 +7,10 @@
     <string name="tab_alerts">Alerts</string>
     <string name="tab_ig_inbox">IG Inbox</string>
     <string name="tab_ig_alerts">IG Alerts</string>
+    <string name="page_alerts">Alerts</string>
+    <string name="page_my_posts">My Posts</string>
+    <string name="page_groups">Groups</string>
+    <string name="checking_owner">Checking that this post is yours</string>
 
     <string name="back">Back</string>
     <string name="reload">Reload</string>
@@ -39,21 +43,28 @@
 
     <!-- Settings screen -->
     <string name="sec_accounts">Your accounts</string>
-    <string name="sec_accounts_note">The app fills these in by itself once you have used each tab. They let you open your own profile and post there. Every other profile stays blocked.</string>
+    <string name="sec_accounts_note">The app fills these in by itself once you have used each tab. They tell the app which profile and which posts are yours. Every other profile stays blocked.</string>
     <string name="pref_fb_username">Facebook username</string>
     <string name="pref_ig_username">Instagram username</string>
 
     <string name="sec_posting">Posting</string>
     <string name="pref_posting">Allow posting</string>
-    <string name="pref_posting_note">Turns on the compose button: write a post, add a story, go live, or list something on Marketplace. Watching other people\'s Reels and Stories stays blocked either way.</string>
+    <string name="pref_posting_note">Turns on the compose button, so you can write a post, add a story, go live, or sell something on Marketplace.</string>
+
+    <string name="sec_posts">Posts</string>
+    <string name="pref_open_tapped">Open other people\'s posts I tap</string>
+    <string name="pref_open_tapped_note">Your own posts, Reels, videos, and stories always open. With this on, a post you tap opens too, so you can read it and reply. It never moves on to the next one. Swiping or autoplay into another post is blocked. Turn this off to open only your own posts.</string>
+
+    <string name="known_posts">Posts known to be yours: %1$d</string>
+    <string name="accounts_line">Facebook: %1$s\nInstagram: %2$s</string>
+    <string name="not_known_yet">not known yet</string>
+    <string name="forget_posts">Forget learned posts</string>
 
     <string name="sec_blocking">Blocking</string>
     <string name="pref_hide">Hide feed links inside pages</string>
-    <string name="pref_reels">Allow single Reels from notifications</string>
-    <string name="pref_groups">Allow single group posts</string>
     <string name="pref_external">Open outside links in your browser</string>
     <string name="pref_toasts">Show a banner when something is blocked</string>
-    <string name="sec_blocking_note">Feeds, Reels, Watch, Stories, Explore, and other people\'s profiles are always blocked. These switches only fine-tune the edges.</string>
+    <string name="sec_blocking_note">The home feed, the Reels and Watch feeds, the Stories feed, Explore, the Groups feed, and other people\'s profiles are always blocked. Your groups stay open.</string>
 
     <string name="sec_site">Site mode</string>
     <string name="pref_desktop_fb">Desktop site for Facebook</string>

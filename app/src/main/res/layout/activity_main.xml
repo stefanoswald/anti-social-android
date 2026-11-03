@@ -73,6 +73,15 @@
             android:src="@drawable/ic_more" />
     </LinearLayout>
 
+    <!-- Alerts, My Posts, or Groups, on the tabs that hold more than one page. -->
+    <com.google.android.material.tabs.TabLayout
+        android:id="@+id/pageTabs"
+        android:layout_width="match_parent"
+        android:layout_height="40dp"
+        android:visibility="gone"
+        app:tabGravity="fill"
+        app:tabMode="fixed" />
+
     <com.google.android.material.progressindicator.LinearProgressIndicator
         android:id="@+id/progress"
         android:layout_width="match_parent"
@@ -81,10 +90,42 @@
         android:visibility="gone" />
 
     <FrameLayout
-        android:id="@+id/webHost"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1" />
+        android:layout_weight="1">
+
+        <FrameLayout
+            android:id="@+id/webHost"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <!-- Covers the page while the app checks that a post is yours, so
+             someone else's post never shows, not even for a moment. -->
+        <LinearLayout
+            android:id="@+id/checkingOverlay"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="?attr/colorSurface"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <ProgressBar
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:indeterminate="true" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:alpha="0.6"
+                android:text="@string/checking_owner"
+                android:textAppearance="?attr/textAppearanceBodySmall" />
+        </LinearLayout>
+    </FrameLayout>
 
     <com.google.android.material.bottomnavigation.BottomNavigationView
         android:id="@+id/bottomNav"

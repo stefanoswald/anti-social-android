@@ -22,12 +22,18 @@
             app:summary="@string/pref_posting_note" />
     </PreferenceCategory>
 
+    <PreferenceCategory app:title="@string/sec_posts">
+        <SwitchPreferenceCompat
+            app:key="openTappedPosts"
+            app:defaultValue="true"
+            app:title="@string/pref_open_tapped"
+            app:summary="@string/pref_open_tapped_note" />
+    </PreferenceCategory>
+
     <PreferenceCategory app:title="@string/sec_blocking">
         <Preference app:key="noteBlocking" app:summary="@string/sec_blocking_note"
             app:selectable="false" app:iconSpaceReserved="false" />
         <SwitchPreferenceCompat app:key="hideDistractions" app:defaultValue="true" app:title="@string/pref_hide" />
-        <SwitchPreferenceCompat app:key="allowReelPermalinks" app:defaultValue="false" app:title="@string/pref_reels" />
-        <SwitchPreferenceCompat app:key="allowGroupPosts" app:defaultValue="true" app:title="@string/pref_groups" />
         <SwitchPreferenceCompat app:key="externalLinksInBrowser" app:defaultValue="true" app:title="@string/pref_external" />
         <SwitchPreferenceCompat app:key="showBlockToasts" app:defaultValue="true" app:title="@string/pref_toasts" />
     </PreferenceCategory>
