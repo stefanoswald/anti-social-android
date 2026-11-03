@@ -17,17 +17,34 @@ Five tabs:
 
 Tap the tab you are already on to jump back to its home page.
 
-## Your posts, and posts you tap
+## Your posts, and posts and profiles you tap
 
 Your own posts, Reels, videos, photos, and stories always open. That is how you
 read and answer comments: tap a comment alert, or open the post from My Posts,
 and reply right on the post.
 
-With **Open other people's posts I tap** on (the default), a post by someone
-else opens too, as long as you tapped a link to it. What never happens is the
-next one. Swiping to the next Reel, a story moving on to the next person, or
+With **Open posts and profiles I tap** on (the default), a post by someone else
+opens too, as long as you tapped a link to it. What never happens is the next
+one. Swiping to the next Reel, a story moving on to the next person, or
 autoplay into another video is blocked, and you stay on the post you opened.
 Turn the switch off and only your own posts open.
+
+Someone else's profile opens the same way: tap their name and you see who they
+are. Every tab of that profile counts as the same tap. The page stops after
+about a screen and a half, with a note that says "Anti-Social stops here", so a
+profile never turns into a feed of their posts.
+
+### One video at a time
+
+A video opens when you tap it, and you can watch it all the way through. Then
+you go back to pick another one.
+
+- Tapping another video from a video page is blocked. Tapping it from a chat,
+  your alerts, or a profile works.
+- If a player starts a second video by itself (the next one in a viewer, or the
+  player moving on after the first one ends), the app stops it and says so.
+- Someone else's video page stops after a short scroll, like a profile.
+- Your own videos always play.
 
 How the app tells the two apart:
 
@@ -76,8 +93,7 @@ repo on purpose), and updates install over each other.
 
 The home feed, the Reels feed, Watch, the Stories feed, Friends, the Groups
 feed and suggestions, Gaming, Events, Memories, Saved, Search, Explore,
-hashtags, every profile except your own, and any post by someone else that
-you did not tap.
+hashtags, and any post or profile by someone else that you did not tap.
 Links that try to open the real Facebook or Instagram apps are blocked too.
 Video never autoplays.
 
@@ -116,12 +132,17 @@ Two details worth knowing, both discovered the hard way:
   is only allowed on its deeper step paths, and on a cold load only for step
   names the app knows.
 
-## Marketplace ads
+## Marketplace
 
-Ads in the Marketplace results are hidden. They made the results jump back to
-the top while scrolling. Each listing sits in a grid cell, and an ad's cell links
-out through `l.facebook.com` and holds no listing, which is how the app tells
-them apart (see `hidingScript` in `Injected.kt`).
+Ads in the Marketplace results are hidden the moment they appear, and their
+videos never load. Each listing sits in a grid cell, and an ad's cell links out
+through `l.facebook.com` and holds no listing, which is how the app tells them
+apart (see `hidingScript` in `Injected.kt`).
+
+When Marketplace jumps back to the top of the results by itself, the page puts
+you back where you were, and the jump goes into Diagnostics with what led up to
+it. A move you made (your finger, a tap, a new search) is never undone.
+Scrolling also takes the focus off the search box.
 
 ## Your username
 
@@ -145,7 +166,10 @@ Settings if the text is too small or the layout feels cramped.
 The circle menu has **Diagnostics**: it captures the links and labels on the
 current page plus a log of everything that was blocked, and lets you share that
 text, along with which accounts the app thinks are yours and how many of your
-posts it knows. Send it along with what you saw and the rule can be tightened.
+posts it knows. The page part also says where the page is scrolled to, what has
+the focus, and the last 40 things the app noticed on the page (new pages,
+Marketplace jumps, videos stopped). Send it along with what you saw and the
+rule can be tightened.
 
 ## Building it yourself
 

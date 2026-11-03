@@ -266,7 +266,11 @@ class MainActivity : AppCompatActivity(), TabController.Callbacks,
                 if (log.isEmpty()) {
                     append(getString(R.string.diagnostics_none))
                 } else {
-                    log.forEach { append("${it.reason}\t${it.tabTitle}\t${it.url}\n") }
+                    log.forEach {
+                        append(it.reason)
+                        if (it.detail.isNotEmpty()) append(" (").append(it.detail).append(")")
+                        append("\t${it.tabTitle}\t${it.url}\n")
+                    }
                 }
                 append("\n\n").append(getString(R.string.diagnostics_page)).append("\n\n")
                 append(map)
@@ -299,6 +303,10 @@ class MainActivity : AppCompatActivity(), TabController.Callbacks,
                 Snackbar.LENGTH_SHORT
             ).show()
         }
+    }
+
+    override fun onEvent(event: BlockEvent) {
+        BlockLog.add(event)
     }
 
     override fun onNotice(controller: TabController, message: String) {

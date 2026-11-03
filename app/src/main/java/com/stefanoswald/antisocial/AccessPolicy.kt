@@ -54,10 +54,16 @@ data class OwnIdentity(
 /** What kind of single thing a link opens. */
 enum class PostKind {
     FACEBOOK_REEL, FACEBOOK_VIDEO, FACEBOOK_PHOTO, FACEBOOK_POST, FACEBOOK_GROUP_POST, FACEBOOK_STORY,
+    /** Someone else's profile. It opens when you tap it, like a post. */
+    FACEBOOK_PROFILE,
     INSTAGRAM_POST, INSTAGRAM_REEL,
     /** instagram.com/reels/<code>/ opens the swipeable Reels player. */
     INSTAGRAM_REELS_PLAYER,
-    INSTAGRAM_STORY, INSTAGRAM_HIGHLIGHT;
+    INSTAGRAM_STORY, INSTAGRAM_HIGHLIGHT,
+    INSTAGRAM_PROFILE;
+
+    val isProfile: Boolean
+        get() = this == FACEBOOK_PROFILE || this == INSTAGRAM_PROFILE
 
     /** Reels and videos, the things a player swipes through. */
     val isVideo: Boolean
@@ -271,6 +277,8 @@ class AccessPolicy(var options: PolicyOptions = PolicyOptions()) {
         if (first == "profile.php") {
             val id = queryValue(uri, "id")
             if (id != null && isOwn(id, SiteKind.FACEBOOK)) return PolicyDecision.Allow
+            if (id != null && isDigits(id)) return profileDecision(SiteKind.FACEBOOK, id)
+            return PolicyDecision.Block("Profile")
         }
 
         // Groups: any one group is fine, with everything in it. The mixed
@@ -304,7 +312,20 @@ class AccessPolicy(var options: PolicyOptions = PolicyOptions()) {
         // Yours is open, with all its tabs (posts, Reels, videos, photos).
         if (isOwn(first, SiteKind.FACEBOOK)) return PolicyDecision.Allow
 
+        // Someone else's opens when you tap a link to it, so you can see who
+        // they are. The page only scrolls a short way (see Injected).
+        if (!isFacebookRoute(first) && FACEBOOK_NAME.matches(first)) return profileDecision(SiteKind.FACEBOOK, first)
+
         return PolicyDecision.Block("Profile")
+    }
+
+    /** Someone else's profile: opens like a post you tap, and never by itself. */
+    private fun profileDecision(site: SiteKind, name: String): PolicyDecision {
+        val owner = name.lowercase()
+        val kind = if (site == SiteKind.INSTAGRAM) PostKind.INSTAGRAM_PROFILE else PostKind.FACEBOOK_PROFILE
+        val prefix = if (site == SiteKind.INSTAGRAM) "ig" else "fb"
+        val home = if (site == SiteKind.INSTAGRAM) "https://www.instagram.com/$owner/" else "https://www.facebook.com/$owner/"
+        return PolicyDecision.Verify(PostRef(site, "$prefix:profile:$owner", home, kind, otherOwner = owner))
     }
 
     private fun decideGroups(uri: Uri, segments: List<String>): PolicyDecision =
@@ -333,8 +354,10 @@ class AccessPolicy(var options: PolicyOptions = PolicyOptions()) {
         // composer. Only the deeper step paths are the create flow. When the
         // page pushes the URL itself the user cannot have typed it, so any
         // step name is fine; on a cold load only the known steps are.
-        if (options.allowPosting && first == "create" && segments.size >= 2) {
-            if (inPage || segments[1] in INSTAGRAM_CREATE_STEPS) return PolicyDecision.Allow
+        if (first == "create" && segments.size >= 2) {
+            if (options.allowPosting && (inPage || segments[1] in INSTAGRAM_CREATE_STEPS)) return PolicyDecision.Allow
+            // Never the profile of the person called "create".
+            return PolicyDecision.Block(if (options.allowPosting) "Create page" else "Posting is off")
         }
 
         // One post, Reel, or story. This is where you answer comments.
@@ -355,6 +378,9 @@ class AccessPolicy(var options: PolicyOptions = PolicyOptions()) {
             }
             return PolicyDecision.Allow
         }
+
+        // Someone else's profile opens when you tap a link to it.
+        if (USERNAME.matches(first)) return profileDecision(SiteKind.INSTAGRAM, first)
 
         return PolicyDecision.Block("Profile")
     }
@@ -495,6 +521,8 @@ class AccessPolicy(var options: PolicyOptions = PolicyOptions()) {
         private val SHORTCODE = Regex("^[A-Za-z0-9_-]{5,80}$")
         private val DIGITS = Regex("^[0-9]+$")
         private val USERNAME = Regex("^[A-Za-z0-9._]{1,30}$")
+        /** Facebook usernames and Page names: letters, digits, dots, and (old Pages) dashes. */
+        private val FACEBOOK_NAME = Regex("^[a-z0-9.-]{1,100}$")
 
         fun siteFor(rawUrl: String): SiteKind {
             val host = (try { Uri.parse(rawUrl).host } catch (e: Exception) { null } ?: "").lowercase()

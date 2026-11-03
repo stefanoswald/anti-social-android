@@ -31,6 +31,7 @@
     <string name="notice_ig_story_glow">Tap the glowing + button, then choose Story.</string>
     <string name="notice_ig_story_find">Tap the + button at the bottom of Instagram, then choose Story.</string>
     <string name="notice_fb_post_failed">Facebook did not open its post window. Scroll down your profile to What\'s on your mind?</string>
+    <string name="notice_one_video">One video at a time. Go back, then tap the next one you want to watch.</string>
     <string name="notice_fb_reel_failed">Facebook did not open its Reel window. Scroll down your profile to the Reel button.</string>
 
     <string name="menu_home">Back to %1$s</string>
@@ -51,7 +52,7 @@
 
     <!-- Settings screen -->
     <string name="sec_accounts">Your accounts</string>
-    <string name="sec_accounts_note">The app fills these in by itself once you have used each tab. They tell the app which profile and which posts are yours. Every other profile stays blocked.</string>
+    <string name="sec_accounts_note">The app fills these in by itself once you have used each tab. They tell the app which profile and which posts are yours.</string>
     <string name="pref_fb_username">Facebook username</string>
     <string name="pref_ig_username">Instagram username</string>
 
@@ -60,8 +61,8 @@
     <string name="pref_posting_note">Turns on the compose button, so you can write a post, add a story, go live, or sell something on Marketplace.</string>
 
     <string name="sec_posts">Posts</string>
-    <string name="pref_open_tapped">Open other people\'s posts I tap</string>
-    <string name="pref_open_tapped_note">Your own posts, Reels, videos, and stories always open. With this on, a post you tap opens too, so you can read it and reply. It never moves on to the next one. Swiping or autoplay into another post is blocked. Turn this off to open only your own posts.</string>
+    <string name="pref_open_tapped">Open posts and profiles I tap</string>
+    <string name="pref_open_tapped_note">Your own posts, Reels, videos, and stories always open. With this on, a post or profile you tap opens too, so you can read it, reply, and see who someone is. Videos play one at a time. Other people\'s profiles and videos stop after a short scroll. Swiping or autoplay into the next post is blocked. Turn this off to open only your own posts.</string>
 
     <string name="known_posts">Posts known to be yours: %1$d</string>
     <string name="accounts_line">Facebook: %1$s\nInstagram: %2$s</string>
@@ -72,7 +73,7 @@
     <string name="pref_hide">Hide feed links inside pages</string>
     <string name="pref_external">Open outside links in your browser</string>
     <string name="pref_toasts">Show a banner when something is blocked</string>
-    <string name="sec_blocking_note">The home feed, the Reels and Watch feeds, the Stories feed, Explore, the Groups feed, and other people\'s profiles are always blocked. Your groups stay open.</string>
+    <string name="sec_blocking_note">The home feed, the Reels and Watch feeds, the Stories feed, Explore, and the Groups feed are always blocked. Your groups stay open.</string>
 
     <string name="sec_site">Site mode</string>
     <string name="pref_desktop_fb">Desktop site for Facebook</string>

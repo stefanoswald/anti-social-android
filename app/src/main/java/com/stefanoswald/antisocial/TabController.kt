@@ -20,12 +20,17 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Date
 
-/** A record of something the app refused to load. */
+/**
+ * A record of something the app refused to load, or of something odd the page
+ * did (like jumping back to the top), for the Diagnostics screen.
+ */
 data class BlockEvent(
     val date: Date,
     val tabTitle: String,
     val url: String,
-    val reason: String
+    val reason: String,
+    /** More about what happened, when there is more to say. */
+    val detail: String = ""
 )
 
 /**
@@ -47,6 +52,8 @@ class TabController(
 
     interface Callbacks {
         fun onBlocked(event: BlockEvent)
+        /** Something odd the page did, for Diagnostics only. No banner. */
+        fun onEvent(event: BlockEvent)
         fun onExternal(url: String)
         /** The app worked out which account is signed in. */
         fun onLearnUsername(site: SiteKind, username: String)
@@ -125,6 +132,23 @@ class TabController(
     private var composeInFlight: ComposeAction? = null
     /** True while the page shows the "learn your username first" note instead of a site. */
     private var showingHomeNote = false
+    /** When the "one video at a time" note last showed. */
+    private var lastVideoNoticeAt = 0L
+    /**
+     * The page you are actually on: set when a page has loaded or changed its
+     * own address, never when a load only starts. [WebView.getUrl] can already
+     * show an address that is still loading.
+     */
+    private var shownPageUrl: String? = null
+    /**
+     * The last profile opened by its number, and when. Facebook can change that
+     * address to the person's name right after, and the name should open too.
+     */
+    private var numberProfileKey: String = ""
+    private var numberProfileAt = 0L
+    /** The last post the app went back to after a block, so it is not reloaded over and over. */
+    private var lastLeaveUrl: String? = null
+    private var lastLeaveAt = 0L
     private var configScriptHandle: androidx.webkit.ScriptHandler? = null
     private var documentStartScript: androidx.webkit.ScriptHandler? = null
     private var hidingScriptHandle: androidx.webkit.ScriptHandler? = null
@@ -218,7 +242,7 @@ class TabController(
 
     /**
      * Checks the page you are on against the current rules, and leaves it if
-     * it no longer passes. Used when "Open other people's posts I tap" is
+     * it no longer passes. Used when "Open posts and profiles I tap" is
      * switched off.
      */
     fun recheckCurrentPage() {
@@ -458,6 +482,20 @@ class TabController(
         callbacks.onBlocked(BlockEvent(Date(), tabLabel, url, reason))
     }
 
+    /** Writes something odd the page did into Diagnostics, without the "Blocked" banner. */
+    private fun recordEvent(url: String, reason: String, detail: String = "") {
+        Log.i(TAG, "[${tab.id}] $reason $detail $url")
+        callbacks.onEvent(BlockEvent(Date(), tabLabel, url, reason, detail))
+    }
+
+    /** One video at a time. Says so, now and then, when the app stops the next video. */
+    private fun showOneVideoNotice() {
+        val now = System.currentTimeMillis()
+        if (!policy.options.openTappedPosts || now - lastVideoNoticeAt < 6000) return
+        lastVideoNoticeAt = now
+        callbacks.onNotice(this, webView.context.getString(R.string.notice_one_video))
+    }
+
     /**
      * Get away from a blocked in-page navigation. Prefer stepping back to the
      * previous allowed page so scroll position and state survive. Fall back to
@@ -518,14 +556,19 @@ class TabController(
      * it. For a real page load ([inPage] false) the load was stopped and is
      * started again once the post turns out to be yours. An in-page change has
      * already happened, so the page is hidden until the answer comes back.
+     *
+     * [from] is the page it was reached from. One video at a time: a tap on
+     * another video from a video page does not open it, unless it is yours
+     * or you watched it already. Going back and forward is never blocked.
      */
-    private fun verify(ref: PostRef, url: String, inPage: Boolean) {
+    private fun verify(ref: PostRef, url: String, inPage: Boolean, from: String?, backForward: Boolean = false) {
         if (inPage) checkGeneration++
         val generation = checkGeneration
+        val secondVideo = !backForward && isSecondVideo(ref, from)
 
         // Yours, or something you tapped: open it now.
         val mine = ownership.verdict(ref) is Ownership.Mine
-        if (mine || (policy.options.openTappedPosts && isTapped(ref.key))) {
+        if (mine || (policy.options.openTappedPosts && isTapped(ref.key) && !secondVideo)) {
             if (inPage) inPageCheckActive = false
             updateCheckingState()
             openPost(ref, url, inPage, generation)
@@ -535,7 +578,7 @@ class TabController(
         val known = ownership.verdict(ref)
             ?: ref.otherOwner?.let { Ownership.SomeoneElse(it) }
         if (known != null) {
-            finishCheck(known, ref, url, inPage, generation)
+            finishCheck(known, ref, url, inPage, generation, secondVideo)
             return
         }
 
@@ -550,11 +593,25 @@ class TabController(
         Log.i(TAG, "[${tab.id}] checking owner of ${ref.key}")
         ownership.check(ref, policy.options.ownIdentity) { answer ->
             if (!inPage) loadChecksRunning = maxOf(0, loadChecksRunning - 1)
-            finishCheck(answer, ref, url, inPage, generation)
+            finishCheck(answer, ref, url, inPage, generation, secondVideo)
         }
     }
 
-    private fun finishCheck(answer: Ownership, ref: PostRef, url: String, inPage: Boolean, generation: Int) {
+    /** A video, reached from a different video, that you have not watched yet. */
+    private fun isSecondVideo(ref: PostRef, from: String?): Boolean {
+        if (!ref.kind.isVideo || ref.key in openedKeys || from == null) return false
+        val before = AccessPolicy.postLink(from) ?: return false
+        return before.kind.isVideo && before.ref.key != ref.key
+    }
+
+    private fun finishCheck(
+        answer: Ownership,
+        ref: PostRef,
+        url: String,
+        inPage: Boolean,
+        generation: Int,
+        secondVideo: Boolean = false
+    ) {
         if (destroyed) return
         // For in-page changes, act only if this is still the latest check and
         // you are still on that post.
@@ -578,14 +635,16 @@ class TabController(
                 if (!inPage || actOnPage) openPost(ref, url, inPage, generation)
             }
             is Ownership.SomeoneElse, is Ownership.Unknown -> {
-                val reason = blockReason(ref, answer)
+                val reason = blockReason(ref, answer, secondVideo)
                 if (inPage) {
                     if (actOnPage) {
                         record(url, reason)
+                        if (secondVideo) showOneVideoNotice()
                         leaveBlockedPost(ref)
                     }
                 } else {
                     record(url, reason)
+                    if (secondVideo) showOneVideoNotice()
                     if (isCurrent && (webView.url == null || policy.isAuthPage(webView.url))) goHome()
                 }
             }
@@ -597,6 +656,9 @@ class TabController(
         markOpened(ref, url)
         if (inPage) {
             webView.evaluateJavascript(Injected.openedScript(listOf(ref.key)), null)
+            // Tell the page it is yours, too. The page only stops short and
+            // holds back videos on other people's things.
+            if (ownership.verdict(ref) is Ownership.Mine) pushKnown(listOf(ref.key))
             showPage()
         } else if (generation == checkGeneration) {
             // The load was stopped while the app checked. Start it again.
@@ -606,11 +668,13 @@ class TabController(
     }
 
     /** Short words for the "Blocked" banner. */
-    private fun blockReason(ref: PostRef, answer: Ownership): String = when {
+    private fun blockReason(ref: PostRef, answer: Ownership, secondVideo: Boolean = false): String = when {
         !policy.options.openTappedPosts ->
             if (answer is Ownership.Unknown) "Could not confirm it is your post" else "Not your post"
+        secondVideo -> "One video at a time"
         ref.kind.isVideo -> "Next Reel"
         ref.kind.isStory -> "Next story"
+        ref.kind.isProfile -> "Only profiles you tap open"
         else -> "Only posts you tap open"
     }
 
@@ -621,7 +685,11 @@ class TabController(
      */
     private fun leaveBlockedPost(ref: PostRef) {
         val previous = lastShownPostUrl
-        if (lastInPageWhy == "replaceState" && previous != null && pendingKey(previous) != ref.key) {
+        val now = System.currentTimeMillis()
+        val justLeft = previous == lastLeaveUrl && now - lastLeaveAt < 5000
+        if (lastInPageWhy == "replaceState" && previous != null && pendingKey(previous) != ref.key && !justLeft) {
+            lastLeaveUrl = previous
+            lastLeaveAt = now
             hidePage()
             load(previous)
         } else {
@@ -647,15 +715,21 @@ class TabController(
 
     /**
      * Uses up a recent tap for this post. [from] is the page the post was
-     * reached from. Null means a real page load, which a player never makes
-     * on its own, so it needs no such check.
+     * reached from. A real page load ([inPage] false) needs no such check,
+     * because a player never makes one on its own. Neither does a profile: a
+     * player never moves on to one by itself, so tapping a name on a post
+     * opens that person's profile.
      */
-    private fun useRecentTap(key: String, from: String?, inPage: Boolean): Boolean {
+    private fun useRecentTap(ref: PostRef, from: String?, inPage: Boolean): Boolean {
         val now = System.currentTimeMillis()
+        if (isRenamedProfile(ref)) {
+            tapGrants[ref.key] = now
+            return true
+        }
         if (now - lastClickAt >= TAP_WINDOW_MS) return false
-        if (inPage && (from == null || AccessPolicy.postLink(from) != null)) return false
+        if (inPage && !ref.kind.isProfile && (from == null || AccessPolicy.postLink(from) != null)) return false
         lastClickAt = 0L
-        tapGrants[key] = now
+        tapGrants[ref.key] = now
         return true
     }
 
@@ -664,7 +738,19 @@ class TabController(
         openedKeys.add(ref.key)
         lastShownPostUrl = url
         lastClickAt = 0L
+        if (ref.kind.isProfile && isNumberProfile(ref.key)) {
+            numberProfileKey = ref.key
+            numberProfileAt = System.currentTimeMillis()
+        }
     }
+
+    private fun isNumberProfile(key: String): Boolean =
+        key.startsWith("fb:profile:") && AccessPolicy.isDigits(key.removePrefix("fb:profile:"))
+
+    /** A profile opened by its number a moment ago, now shown under the person's name. */
+    private fun isRenamedProfile(ref: PostRef): Boolean =
+        ref.kind.isProfile && ref.key.startsWith("fb:profile:") && !isNumberProfile(ref.key) &&
+            numberProfileKey.isNotEmpty() && System.currentTimeMillis() - numberProfileAt < 5000
 
     private fun isTapped(key: String): Boolean {
         if (key in openedKeys) return true
@@ -720,6 +806,7 @@ class TabController(
                 val url = body.optString("url")
                 if (url.isEmpty()) return
                 currentUrl = url
+                shownPageUrl = url
                 val why = body.optString("why")
                 lastInPageWhy = why
                 val from = lastPageUrl
@@ -736,9 +823,9 @@ class TabController(
                     }
                     is PolicyDecision.Verify -> {
                         if (why == "pushState" || why == "replaceState" || why == "poll") {
-                            useRecentTap(decision.ref.key, from, inPage = true)
+                            useRecentTap(decision.ref, from, inPage = true)
                         }
-                        verify(decision.ref, url, inPage = true)
+                        verify(decision.ref, url, inPage = true, from = from, backForward = why == "popstate")
                     }
                     is PolicyDecision.External -> {
                         endOwnerCheck()
@@ -754,6 +841,20 @@ class TabController(
             }
 
             "tap" -> noteTap(body.optString("href"))
+
+            // The page stopped a second video that started by itself.
+            "video-blocked" -> {
+                Log.i(TAG, "[${tab.id}] stopped a second video")
+                showOneVideoNotice()
+            }
+
+            // Marketplace jumped back to the top. The page put it back if it
+            // could, and says what led up to it.
+            "jump" -> {
+                val url = body.optString("url")
+                if (url.isEmpty()) return
+                recordEvent(url, "Marketplace jumped to the top", body.optString("detail").take(400))
+            }
 
             "compose" -> {
                 val action = composeInFlight ?: return
@@ -817,10 +918,11 @@ class TabController(
                 }
                 is PolicyDecision.Verify -> {
                     val ref = decision.ref
+                    val from = shownPageUrl ?: webView.url
                     // A share link you tapped redirects here.
-                    if (request.isForMainFrame) useRecentTap(ref.key, null, inPage = false)
+                    if (request.isForMainFrame) useRecentTap(ref, null, inPage = false)
                     if (ownership.verdict(ref) is Ownership.Mine ||
-                        (policy.options.openTappedPosts && isTapped(ref.key))
+                        (policy.options.openTappedPosts && isTapped(ref.key) && !isSecondVideo(ref, from))
                     ) {
                         markOpened(ref, url)
                         false
@@ -830,7 +932,7 @@ class TabController(
                     } else {
                         // Stop the load while the app checks. It starts again
                         // if the post turns out to be yours.
-                        verify(decision.ref, url, inPage = false)
+                        verify(decision.ref, url, inPage = false, from = from)
                         true
                     }
                 }
@@ -862,6 +964,7 @@ class TabController(
         override fun onPageFinished(view: WebView, url: String?) {
             isLoading = false
             currentUrl = url
+            if (url != null && url.startsWith("http")) shownPageUrl = url
             CookieManager.getInstance().flush()
             // Never show a post that is still being checked or was refused.
             if (!isCheckingOwner && url != null && isAllowedWithoutChecking(url)) showPage()
@@ -878,7 +981,7 @@ class TabController(
             is PolicyDecision.Allow -> webView.loadUrl(url)
             is PolicyDecision.Verify ->
                 if (ownership.verdict(decision.ref) is Ownership.Mine) webView.loadUrl(url)
-                else verify(decision.ref, url, inPage = false)
+                else verify(decision.ref, url, inPage = false, from = shownPageUrl ?: webView.url)
             is PolicyDecision.External -> callbacks.onExternal(decision.url)
             is PolicyDecision.Block -> record(url, decision.reason)
         }

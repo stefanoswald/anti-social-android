@@ -189,13 +189,32 @@ object Injected {
             try { $BRIDGE.post(JSON.stringify(payload)); } catch (e) {}
         }
 
-        // Set by the app: whether only your own posts may open, and every name
-        // the sites might use for you. Read on every use, so updates count.
+        // Set by the app: whether posts you tap may open, and every name the
+        // sites might use for you. Read on every use, so updates count.
         function config() { return window.__as_cfg || {}; }
         if (!window.__as_known) { window.__as_known = {}; }
         window.__as_setKnown = function (keys) {
             for (var i = 0; i < keys.length; i++) { window.__as_known[keys[i]] = 1; }
+            try { updateFence(); } catch (e) {}
         };
+
+        // A short record of what happened on this page. The Diagnostics page map
+        // shows it, so a glitch can be traced after the fact.
+        var events = [];
+        window.__as_events = events;
+        function two(n) { return (n < 10 ? "0" : "") + n; }
+        function note(kind, detail) {
+            var d = new Date();
+            events.push(two(d.getHours()) + ":" + two(d.getMinutes()) + ":" + two(d.getSeconds()) + " " + kind + (detail ? " " + detail : ""));
+            if (events.length > 40) { events.shift(); }
+        }
+        window.__as_note = note;
+
+        // Only real taps and touches count. Clicks the page makes up itself do not.
+        function isReal(event) {
+            if (!event.isTrusted) { return; }
+            return true;
+        }
 
         // Hide the page and stop any video while the app decides about it.
         window.__as_hidden = false;
@@ -242,11 +261,16 @@ object Injected {
         function pathParts(url) {
             return url.pathname.split("/").filter(function (part) { return part.length > 0; });
         }
-        var facebookRoutes = /^(reel|reels|watch|video|videos|video\.php|groups|profile\.php|photo|photo\.php|permalink\.php|story\.php|stories|story|messages|marketplace|notifications|me|share|n|nd|l\.php|media|plugins|sharer|sharer\.php|hashtag|search|events|pages|gaming|live|friends|saved|bookmarks|menu|professional_dashboard|content|settings|help|login|checkpoint)${'$'}/;
-        var instagramRoutes = /^(p|reel|reels|tv|stories|explore|direct|accounts|create|notifications|api|graphql|web|about|legal|static|challenge|session|emails|linkshim|your_activity|settings|help|search|shopping|shop|locations|topics|guides|live|lite|threads)${'$'}/;
+        function has(map, key) { return Object.prototype.hasOwnProperty.call(map, key); }
 
-        // One post, Reel, video, or photo: its key and the owner the link names,
-        // if any. Mirrors the app's own rules. Null for anything else.
+        // First path segments that are parts of the site, never a person. Built
+        // from the app's own rules, so the page and the app always agree.
+        var facebookRoutes = {"a": 1, "accountscenter": 1, "ajax": 1, "api": 1, "async": 1, "auth": 1, "bookmarks": 1, "checkpoint": 1, "comment": 1, "confirmemail.php": 1, "consent": 1, "content": 1, "cookie": 1, "dating": 1, "device-based": 1, "dialog": 1, "events": 1, "explore": 1, "feeds": 1, "friends": 1, "fundraisers": 1, "games": 1, "gaming": 1, "groups": 1, "hashtag": 1, "help": 1, "home.php": 1, "images": 1, "jobs": 1, "l.php": 1, "language": 1, "legal": 1, "live": 1, "login": 1, "login.php": 1, "logout": 1, "logout.php": 1, "marketplace": 1, "me": 1, "media": 1, "memories": 1, "menu": 1, "messages": 1, "messages.php": 1, "mobile": 1, "n": 1, "nd": 1, "news": 1, "notifications": 1, "notifications.php": 1, "oauth": 1, "offers": 1, "pages": 1, "people": 1, "permalink.php": 1, "photo": 1, "photo.php": 1, "places": 1, "plugins": 1, "policies": 1, "policy": 1, "privacy": 1, "professional_dashboard": 1, "profile.php": 1, "public": 1, "recover": 1, "recover.php": 1, "reel": 1, "reels": 1, "rsrc.php": 1, "saved": 1, "search": 1, "security": 1, "settings": 1, "share": 1, "sharer": 1, "sharer.php": 1, "si": 1, "stories": 1, "story": 1, "story.php": 1, "terms": 1, "topic": 1, "two_factor": 1, "two_step_verification": 1, "ufi": 1, "video": 1, "video.php": 1, "videos": 1, "watch": 1, "weather": 1, "x": 1};
+        var instagramRoutes = {"about": 1, "accounts": 1, "ajax": 1, "api": 1, "auth_platform": 1, "challenge": 1, "coming_soon": 1, "consent": 1, "create": 1, "data": 1, "direct": 1, "emails": 1, "explore": 1, "graphql": 1, "guides": 1, "help": 1, "legal": 1, "linkshim": 1, "lite": 1, "live": 1, "locations": 1, "logging": 1, "login": 1, "logout": 1, "notifications": 1, "oauth": 1, "p": 1, "privacy": 1, "push": 1, "qp": 1, "reel": 1, "reels": 1, "search": 1, "session": 1, "settings": 1, "shop": 1, "shopping": 1, "static": 1, "stories": 1, "terms": 1, "threads": 1, "topics": 1, "tv": 1, "two_factor": 1, "web": 1, "your_activity": 1};
+
+        // One post, Reel, video, photo, story, or someone's profile: its key and
+        // the owner the link names, if any. Mirrors the app's own rules. Null for
+        // anything else.
         function postInfo(href) {
             var url;
             try { url = new URL(String(href), location.href); } catch (e) { return null; }
@@ -256,13 +280,13 @@ object Injected {
             var query = url.searchParams;
             if (onFacebook(url.hostname)) {
                 if (first === "reel" && isDigits(parts[1])) {
-                    return { key: "fb:video:" + parts[1], owner: null };
+                    return { key: "fb:video:" + parts[1], owner: null, video: true };
                 }
                 if ((first === "watch" || first === "video.php") && isDigits(query.get("v"))) {
-                    return { key: "fb:video:" + query.get("v"), owner: null };
+                    return { key: "fb:video:" + query.get("v"), owner: null, video: true };
                 }
                 if ((first === "videos" || first === "video") && isDigits(parts[1])) {
-                    return { key: "fb:video:" + parts[1], owner: null };
+                    return { key: "fb:video:" + parts[1], owner: null, video: true };
                 }
                 if ((first === "photo" || first === "photo.php") && isDigits(query.get("fbid"))) {
                     var setValue = query.get("set") || "";
@@ -279,7 +303,12 @@ object Injected {
                 if (first === "stories" && parts.length >= 2 && !/^(create|archive)${'$'}/i.test(parts[1])) {
                     return { key: "fb:story:" + lower(parts[1]), owner: lower(parts[1]), story: true };
                 }
-                if (parts.length >= 3 && !facebookRoutes.test(first)) {
+                if (first === "profile.php") {
+                    var id = query.get("id");
+                    return isDigits(id) ? { key: "fb:profile:" + id, owner: id, profile: true } : null;
+                }
+                if (has(facebookRoutes, first)) { return null; }
+                if (parts.length >= 3) {
                     var kind = lower(parts[1]);
                     if (kind === "posts" || kind === "permalink") {
                         return { key: "fb:post:" + parts[2], owner: first };
@@ -287,10 +316,15 @@ object Injected {
                     if (kind === "videos" || kind === "photos") {
                         for (var i = parts.length - 1; i >= 2; i--) {
                             if (isDigits(parts[i])) {
-                                return { key: (kind === "videos" ? "fb:video:" : "fb:photo:") + parts[i], owner: first };
+                                return kind === "videos"
+                                    ? { key: "fb:video:" + parts[i], owner: first, video: true }
+                                    : { key: "fb:photo:" + parts[i], owner: first };
                             }
                         }
                     }
+                }
+                if (/^[a-z0-9.-]{1,100}${'$'}/.test(first)) {
+                    return { key: "fb:profile:" + first, owner: first, profile: true };
                 }
                 return null;
             }
@@ -305,10 +339,16 @@ object Injected {
                     return null;
                 }
                 if (/^(p|reel|reels|tv)${'$'}/.test(first) && isCode(parts[1])) {
-                    return { key: "ig:" + parts[1], owner: null };
+                    return { key: "ig:" + parts[1], owner: null, video: first === "reel" || first === "reels" };
                 }
-                if (parts.length >= 3 && /^(p|reel|tv)${'$'}/i.test(parts[1]) && isCode(parts[2]) && !instagramRoutes.test(first)) {
-                    return { key: "ig:" + parts[2], owner: first };
+                if (parts.length >= 3 && /^(p|reel|tv)${'$'}/i.test(parts[1]) && isCode(parts[2]) && !has(instagramRoutes, first)) {
+                    return { key: "ig:" + parts[2], owner: first, video: lower(parts[1]) === "reel" };
+                }
+                // instagram.com/create/ alone is a person. Deeper paths are the
+                // post composer.
+                if (first === "create" ? parts.length >= 2 : has(instagramRoutes, first)) { return null; }
+                if (/^[a-z0-9._]{1,30}${'$'}/.test(first)) {
+                    return { key: "ig:profile:" + first, owner: first, profile: true };
                 }
             }
             return null;
@@ -327,6 +367,25 @@ object Injected {
             }
             return false;
         }
+        // Yours: a link that names you, or a post the app knows is yours.
+        function isMine(info) {
+            return !!(info && ((info.owner && isOwn(info.owner)) || window.__as_known[info.key]));
+        }
+
+        // The page you are on, judged like a link.
+        var hereHref = null;
+        var hereInfo = null;
+        function here() {
+            if (location.href !== hereHref) {
+                hereHref = location.href;
+                hereInfo = postInfo(hereHref);
+            }
+            return hereInfo;
+        }
+        function isOtherVideo(from, key) {
+            var before = from ? postInfo(from) : null;
+            return !!(before && before.video && before.key !== key);
+        }
 
         // Posts you tapped. A post you tap opens; the next one does not open by
         // itself. Kept for a few seconds per tap, and for good once opened.
@@ -335,18 +394,36 @@ object Injected {
         function wasTapped(key) {
             return !!(tapped[key] && Date.now() - tapped[key] < 10000);
         }
+        // Facebook can change a profile's address right after it opens: the
+        // person's number becomes their name. That is still the profile you
+        // tapped, so the name opens too, for a few seconds.
+        var numberProfile = { key: "", at: 0 };
+        function openedProfile(key) {
+            if (/^fb:profile:\d+${'$'}/.test(key)) { numberProfile = { key: key, at: Date.now() }; }
+        }
+        function renamedProfile(key) {
+            return /^fb:profile:/.test(key) && !/^fb:profile:\d+${'$'}/.test(key) &&
+                numberProfile.key !== "" && Date.now() - numberProfile.at < 5000;
+        }
         // The app tells the page about posts it opened, so coming back to one
         // never covers the page again.
         window.__as_opened = function (keys) {
-            for (var i = 0; i < keys.length; i++) { opened[keys[i]] = 1; }
+            for (var i = 0; i < keys.length; i++) {
+                opened[keys[i]] = 1;
+                openedProfile(keys[i]);
+            }
         };
 
         // Every real tap is reported, so the app knows what you chose to open,
         // as opposed to what a player moved on to by itself. A tap on a link
         // also names the link. This listens on the window, ahead of the page's
         // own handlers, and ignores clicks the page makes up itself.
+        var lastTapAt = 0;
+        var lastTapPoint = null;
         window.addEventListener("click", function (event) {
-            if (!event.isTrusted) { return; }
+            if (!isReal(event)) { return; }
+            lastTapAt = Date.now();
+            lastTapPoint = { x: event.clientX, y: event.clientY, at: lastTapAt };
             var target = event.target;
             var anchor = target && target.closest ? target.closest("a[href]") : null;
             var href = anchor ? anchor.href : "";
@@ -355,12 +432,14 @@ object Injected {
                 var info = postInfo(href);
                 if (info) { tapped[info.key] = Date.now(); }
             }
+            tapForVideo(target);
             post({ type: "tap", href: href });
         }, true);
 
         // A post the app has not cleared yet. It stays hidden until the app has
-        // checked whose it is.
-        function needsCheck(href) {
+        // checked whose it is. One video at a time: a tap on another video from
+        // a video page does not count, so that one waits for the app too.
+        function needsCheck(href, from, why) {
             var c = window.__as_cfg;
             if (!c) { return false; }
             var info = postInfo(href);
@@ -368,24 +447,70 @@ object Injected {
             if (info.owner && isOwn(info.owner)) { return false; }
             if (window.__as_known[info.key] || (c.tapOpens && opened[info.key])) { return false; }
             if (c.tapOpens && wasTapped(info.key)) {
+                if (info.video && why !== "popstate" && isOtherVideo(from, info.key)) { return true; }
+                opened[info.key] = 1;
+                openedProfile(info.key);
+                return false;
+            }
+            if (c.tapOpens && renamedProfile(info.key)) {
                 opened[info.key] = 1;
                 return false;
             }
             return true;
         }
 
+        var lastReported = "";
+        var lastUrlAt = Date.now();
+        function samePage(a, b) {
+            if (!a || !b) { return false; }
+            var x = postInfo(a);
+            var y = postInfo(b);
+            if (x || y) { return !!(x && y && x.key === y.key); }
+            try { return new URL(a).pathname === new URL(b).pathname; } catch (e) { return false; }
+        }
+        function samePath(a, b) {
+            try { return new URL(a).pathname === new URL(b).pathname; } catch (e) { return false; }
+        }
+        function sameSearch(a, b) {
+            try { return new URL(a).search === new URL(b).search; } catch (e) { return false; }
+        }
+        // When the address last changed in a way that means new results: a new
+        // page, a new search, or a new filter.
+        var lastNewResultsAt = 0;
+        var startedAt = Date.now();
+        function pageChanged(from, href, why) {
+            lastUrlAt = Date.now();
+            if (from && (!samePath(from, href) || !sameSearch(from, href))) { lastNewResultsAt = lastUrlAt; }
+            // A new page starts over.
+            if (!samePath(from, href)) {
+                scrollState = { y: 0, at: 0 };
+                upRun = null;
+            }
+            var parts = pathParts(location);
+            note("page", why + " /" + parts.slice(0, 3).join("/"));
+            if (!samePage(from, href)) { resetVideo("new page"); }
+            updateFence();
+        }
+
         function report(why) {
-            if (needsCheck(location.href)) { window.__as_hide(); }
-            post({ type: "url", url: location.href, why: why });
+            var from = lastReported;
+            var href = location.href;
+            lastReported = href;
+            last = href;
+            if (needsCheck(href, from, why)) { window.__as_hide(); }
+            post({ type: "url", url: href, why: why });
+            if (href !== from) { pageChanged(from, href, why); }
         }
 
         function wrap(name) {
             var original = history[name];
             if (typeof original !== "function") { return; }
             history[name] = function () {
+                var before = location.href;
                 var result = original.apply(this, arguments);
                 try {
-                    if (needsCheck(location.href)) { window.__as_hide(); }
+                    if (location.href !== before) { lastUrlAt = Date.now(); }
+                    if (needsCheck(location.href, before, name)) { window.__as_hide(); }
                 } catch (e) {}
                 setTimeout(function () { report(name); }, 0);
                 return result;
@@ -403,18 +528,408 @@ object Injected {
                 last = location.href;
                 report("poll");
             }
+            try { updateFence(); } catch (e) {}
         }, 400);
 
         // The page's own first address counts too. Back and Reload can land on
         // a post without any link being tapped. Hide it right away if it needs
         // checking, then let the app decide.
         try {
-            if (needsCheck(location.href)) { window.__as_hide(); }
+            if (needsCheck(location.href, "", "load")) { window.__as_hide(); }
         } catch (e) {}
         setTimeout(function () { report("load"); }, 0);
         window.addEventListener("pageshow", function (event) {
             if (event.persisted) { report("pageshow"); }
         });
+
+        // ---------------------------------------------------------------- fence
+
+        // Someone else's profile or video shows only its top part: about a
+        // screen and a half. That is enough to see who they are, or to watch the
+        // one video, and the page cannot scroll on into an endless list.
+        var fenceText = "Anti-Social stops here. Tap Back to leave this page.";
+        var fenceOn = false;
+        function fenceLimit() {
+            return Math.max(1800, Math.round((window.innerHeight || 900) * 1.6));
+        }
+        function fenceWanted() {
+            if (!window.__as_cfg) { return false; }
+            var info = here();
+            if (!info || info.inGroup || isMine(info)) { return false; }
+            return !!(info.profile || info.video);
+        }
+        function updateFence() {
+            var want = fenceWanted();
+            var style = document.getElementById("__as_fence");
+            if (!want) {
+                if (style && style.parentNode) { style.parentNode.removeChild(style); }
+                if (fenceOn) { note("fence", "off"); }
+                fenceOn = false;
+                return;
+            }
+            var css = "html { overflow-y: auto !important; }" +
+                " body { max-height: " + fenceLimit() + "px !important; overflow: hidden !important; overflow: clip !important; }" +
+                " html::after { content: \"" + fenceText + "\"; display: block; box-sizing: border-box; width: 100%;" +
+                " padding: 28px 20px 160px; text-align: center; color: #8a8d91; font-weight: 600; line-height: 1.4;" +
+                " font-family: -apple-system, system-ui, sans-serif; font-size: 16px; font-size: max(16px, 3vw); }";
+            if (!style) {
+                style = document.createElement("style");
+                style.id = "__as_fence";
+                (document.head || document.documentElement).appendChild(style);
+            }
+            if (style.textContent !== css) { style.textContent = css; }
+            if (!fenceOn) { note("fence", "on"); }
+            fenceOn = true;
+        }
+        updateFence();
+
+        // A backup for the fence, for pages that scroll a box of their own.
+        function fenceBox(box) {
+            if (!fenceOn || !box || typeof box.scrollTop !== "number") { return; }
+            // A pop-up with no video in it (comments, a chat) scrolls freely.
+            var popup = box.closest ? box.closest('[role="dialog"]') : null;
+            if (popup && !popup.querySelector("video")) { return; }
+            var limit = fenceLimit();
+            if (box.scrollTop > limit) { box.scrollTop = limit; }
+        }
+
+        // ---------------------------------------------------------------- video
+
+        // One video at a time. The first video you play on a page plays. If
+        // another one starts by itself (the next one in a viewer, or the player
+        // moving on after the first one ended), it is stopped and the app tells
+        // you. Opening another page, or tapping outside a viewer on a page that
+        // is not a video, lets the next video you pick play.
+        var gate = { video: null, src: "", ended: false, length: 0 };
+        var lastVideoNotice = 0;
+        function resetVideo(why) {
+            if (gate.video) { note("video", "reset, " + why); }
+            gate.video = null;
+            gate.src = "";
+            gate.ended = false;
+            gate.length = 0;
+        }
+        function sourceOf(video) { return String(video.currentSrc || video.src || ""); }
+        function lengthOf(video) {
+            var d = video.duration;
+            return (typeof d === "number" && isFinite(d) && d > 0) ? d : 0;
+        }
+        // Animated stickers and GIFs are short silent loops, and tiny previews
+        // are not watched. Neither counts as a video.
+        function notAVideo(video) {
+            if (video.loop && video.muted) { return true; }
+            var box = video.getBoundingClientRect();
+            return box.width < 120 && box.height < 120;
+        }
+        // A tap that landed on this video in the last moment or two: you picked it.
+        function tappedOn(video) {
+            if (!lastTapPoint || Date.now() - lastTapPoint.at > 1500) { return false; }
+            var box = video.getBoundingClientRect();
+            return lastTapPoint.x >= box.left - 8 && lastTapPoint.x <= box.left + box.width + 8 &&
+                lastTapPoint.y >= box.top - 8 && lastTapPoint.y <= box.top + box.height + 8;
+        }
+        function tapForVideo(target) {
+            var info = here();
+            if (info && info.video) { return; }
+            var inViewer = target && target.closest ? target.closest('[role="dialog"]') : null;
+            if (!inViewer) { resetVideo("tap"); }
+        }
+        function videoAllowed(video) {
+            if (!gate.video || tappedOn(video)) { return true; }
+            if (video === gate.video) {
+                var src = sourceOf(video);
+                if (!gate.src || !src || src === gate.src) { return true; }
+                // The same player with a new video in it. Fine while the first
+                // one plays (a sharper copy, say). After it ended, the player is
+                // moving on to the next one.
+                return !gate.ended;
+            }
+            // Another player with the same video in it, like a bigger player.
+            var length = lengthOf(video);
+            return !gate.ended && length > 0 && gate.length > 0 && Math.abs(length - gate.length) < 0.75;
+        }
+        function onVideoPlay(event) {
+            var video = event.target;
+            if (!video || video.tagName !== "VIDEO" || window.__as_hidden) { return; }
+            if (!window.__as_cfg || isMine(here()) || notAVideo(video)) { return; }
+            if (videoAllowed(video)) {
+                if (gate.video !== video) { note("video", "plays"); }
+                if (gate.video !== video || sourceOf(video) !== gate.src) { gate.ended = false; }
+                gate.video = video;
+                var src = sourceOf(video);
+                if (src) { gate.src = src; }
+                var length = lengthOf(video);
+                if (length) { gate.length = length; }
+                return;
+            }
+            try { video.pause(); } catch (e) {}
+            note("video", "stopped a second one");
+            var now = Date.now();
+            if (now - lastVideoNotice > 4000) {
+                lastVideoNotice = now;
+                post({ type: "video-blocked", url: location.href });
+            }
+        }
+        document.addEventListener("play", onVideoPlay, true);
+        document.addEventListener("playing", onVideoPlay, true);
+        document.addEventListener("ended", function (event) {
+            if (event.target === gate.video) {
+                gate.ended = true;
+                note("video", "ended");
+            }
+        }, true);
+        document.addEventListener("durationchange", function (event) {
+            if (event.target === gate.video) {
+                var length = lengthOf(gate.video);
+                if (length) { gate.length = length; }
+            }
+        }, true);
+
+        // ---------------------------------------------------------- Marketplace
+
+        // Marketplace jumped back to the top of the results while you scrolled.
+        // When the page moves up by itself, it is put back where you were, and
+        // the app writes the jump into Diagnostics with what led up to it.
+        function onMarketplace() {
+            return onFacebook(location.hostname) && /^\/marketplace(\/|${'$'})/i.test(location.pathname);
+        }
+        function pageY() {
+            var root = document.scrollingElement || document.documentElement;
+            return Math.max(window.pageYOffset || 0, root ? root.scrollTop : 0);
+        }
+        function pageHeight() {
+            var root = document.scrollingElement || document.documentElement;
+            return root ? root.scrollHeight : 0;
+        }
+        function describe(el) {
+            if (!el || !el.tagName || el === document.body || el === document.documentElement) { return "none"; }
+            var text = lower(el.tagName);
+            var type = el.getAttribute("type");
+            var label = el.getAttribute("aria-label") || el.getAttribute("placeholder") || el.getAttribute("name");
+            if (type) { text += "[" + type + "]"; }
+            if (label) { text += " '" + String(label).slice(0, 40) + "'"; }
+            return text;
+        }
+        function isSearchBox(el) {
+            if (!el || !el.tagName) { return false; }
+            var role = lower(el.getAttribute("role"));
+            var label = (el.getAttribute("aria-label") || "") + " " + (el.getAttribute("placeholder") || "");
+            return lower(el.type) === "search" || role === "searchbox" || role === "combobox" || /search/i.test(label);
+        }
+        function isTyping(el) {
+            if (!el || !el.tagName) { return false; }
+            if (el.tagName === "TEXTAREA" || el.isContentEditable === true) { return true; }
+            return el.tagName === "INPUT" && !/^(checkbox|radio|button|submit|reset|range|file|color|image|hidden)${'$'}/i.test(el.type || "");
+        }
+
+        // Where your finger is, and which way it last moved. Pulling the page
+        // down with your finger is you scrolling up.
+        var touching = false;
+        var touchY = 0;
+        var touchStartY = 0;
+        var touchStartAt = 0;
+        var lastTouchAt = 0;
+        var lastTouchEnd = 0;
+        var fingerDir = "";
+        var blurredThisTouch = false;
+        function youScrollUp(now) {
+            return fingerDir === "down" && (touching || now - lastTouchEnd < 3000);
+        }
+
+        var lastScrollCall = null;
+        var restoring = false;
+        // Notes which code moved the page last, so a jump can be traced.
+        function watchCall(owner, name) {
+            var original = owner && owner[name];
+            if (typeof original !== "function") { return; }
+            owner[name] = function () {
+                if (!restoring && onMarketplace()) {
+                    lastScrollCall = { what: name + " on " + (this === window || !this ? "page" : describe(this)), at: Date.now() };
+                }
+                return original.apply(this, arguments);
+            };
+        }
+        watchCall(window, "scrollTo");
+        watchCall(window, "scroll");
+        watchCall(window, "scrollBy");
+        if (window.Element) {
+            watchCall(Element.prototype, "scrollIntoView");
+            watchCall(Element.prototype, "scrollTo");
+            watchCall(Element.prototype, "scroll");
+        }
+        // A box the page focuses by itself on Marketplace never scrolls the page.
+        if (window.HTMLElement && typeof HTMLElement.prototype.focus === "function") {
+            var originalFocus = HTMLElement.prototype.focus;
+            HTMLElement.prototype.focus = function (options) {
+                if (onMarketplace() && Date.now() - Math.max(lastTapAt, lastTouchAt) > 700) {
+                    lastScrollCall = { what: "focus on " + describe(this), at: Date.now() };
+                    var settings = {};
+                    if (options && typeof options === "object") {
+                        for (var k in options) { settings[k] = options[k]; }
+                    }
+                    settings.preventScroll = true;
+                    return originalFocus.call(this, settings);
+                }
+                return originalFocus.apply(this, arguments);
+            };
+        }
+
+        // Scrolling with a search box still focused takes the focus away, which
+        // also puts the keyboard away. Phones scroll back up to a box that has
+        // the focus.
+        window.addEventListener("touchstart", function (event) {
+            if (!isReal(event)) { return; }
+            var y = event.touches && event.touches[0] ? event.touches[0].clientY : 0;
+            touching = true;
+            touchY = y;
+            touchStartY = y;
+            touchStartAt = Date.now();
+            lastTouchAt = touchStartAt;
+            blurredThisTouch = false;
+        }, { capture: true, passive: true });
+        window.addEventListener("touchmove", function (event) {
+            if (!isReal(event)) { return; }
+            lastTouchAt = Date.now();
+            var y = event.touches && event.touches[0] ? event.touches[0].clientY : touchY;
+            if (Math.abs(y - touchY) >= 2) {
+                fingerDir = y > touchY ? "down" : "up";
+                touchY = y;
+            }
+            if (blurredThisTouch || !onMarketplace() || Math.abs(y - touchStartY) < 12) { return; }
+            if (/^\/marketplace\/create/i.test(location.pathname)) { return; }
+            var el = document.activeElement;
+            if (!isTyping(el) || !isSearchBox(el)) { return; }
+            var target = event.target;
+            if (target && target.closest && (target.closest('[role="listbox"], [role="dialog"]') || el.contains(target))) { return; }
+            blurredThisTouch = true;
+            try { el.blur(); } catch (e) {}
+            note("blur", describe(el));
+        }, { capture: true, passive: true });
+        var lastKeyAt = 0;
+        function keyDone(event) {
+            if (!isReal(event)) { return; }
+            lastKeyAt = Date.now();
+        }
+        window.addEventListener("keydown", keyDone, true);
+        window.addEventListener("input", keyDone, true);
+        window.addEventListener("submit", keyDone, true);
+        function touchDone(event) {
+            if (!isReal(event)) { return; }
+            touching = false;
+            lastTouchEnd = Date.now();
+            lastTouchAt = lastTouchEnd;
+        }
+        window.addEventListener("touchend", touchDone, { capture: true, passive: true });
+        window.addEventListener("touchcancel", touchDone, { capture: true, passive: true });
+
+        var scrollState = { y: 0, at: 0 };
+        var pageTall = 0;
+        var pageTallAt = 0;
+        var upRun = null;
+        // The first few listings on the page. The same listings after a trip
+        // to the top means the page jumped. New ones mean new results.
+        var listings = "";
+        function firstListings() {
+            var links = document.querySelectorAll('[role="main"] a[href*="/marketplace/item/"]');
+            var ids = [];
+            for (var i = 0; i < links.length && ids.length < 3; i++) {
+                var m = String(links[i].getAttribute("href") || "").match(/\/marketplace\/item\/(\d+)/);
+                if (m) { ids.push(m[1]); }
+            }
+            return ids.join(",");
+        }
+        var lastJumpPost = 0;
+        function restore(target) {
+            restoring = true;
+            var started = Date.now();
+            var urlAt = lastUrlAt;
+            var shown = firstListings();
+            function finish(how) {
+                restoring = false;
+                scrollState = { y: pageY(), at: Date.now() };
+                note("jump", how);
+            }
+            (function again() {
+                // New results arrived, or you moved: leave the page alone.
+                if (shown !== "" && firstListings() !== shown) { finish("new listings, left alone"); return; }
+                if (Date.now() - started > 3000 || touchStartAt > started || lastUrlAt !== urlAt) { finish("could not put back"); return; }
+                if (pageHeight() - (window.innerHeight || 0) >= target - 20) {
+                    window.scrollTo(0, target);
+                }
+                if (Math.abs(pageY() - target) < 40) { finish("put back"); return; }
+                setTimeout(again, 100);
+            })();
+        }
+        function onPageScroll() {
+            var now = Date.now();
+            var y = pageY();
+            var before = scrollState;
+            scrollState = { y: y, at: now };
+            if (fenceOn) {
+                var limit = fenceLimit() + 400;
+                if (y > limit) { window.scrollTo(0, limit); }
+            }
+            if (restoring || !onMarketplace()) {
+                upRun = null;
+                return;
+            }
+            if (now - pageTallAt > 500 && !upRun) {
+                pageTall = pageHeight();
+                pageTallAt = now;
+                listings = firstListings();
+            }
+            if (y > before.y + 1) {
+                upRun = null;
+                return;
+            }
+            if (y >= before.y - 1) { return; }
+            if (!upRun) {
+                upRun = { from: before.y, at: before.at || now, tall: pageTall, listings: listings, steps: 0, you: false };
+            }
+            upRun.steps++;
+            if (youScrollUp(now)) { upRun.you = true; }
+            if (!(y <= 150 && upRun.from >= 400 && upRun.from - y >= 300)) { return; }
+            var run = upRun;
+            upRun = null;
+            // A move you made: your finger, a tap, typing, or new results (a new
+            // search or filter, or different listings at the top).
+            var newListings = run.listings !== "" && firstListings() !== run.listings;
+            if (run.you || now - startedAt < 1500 || now - lastTapAt < 1500 || now - lastKeyAt < 5000 ||
+                now - lastNewResultsAt < 5000 || newListings) {
+                note("scroll-top", "from " + Math.round(run.from));
+                return;
+            }
+            var call = lastScrollCall && lastScrollCall.at >= run.at - 300 ? lastScrollCall.what : "";
+            // A jump all at once, or one the page's own code made, is put back.
+            // A smooth trip to the top with neither may be a tap on the phone's
+            // status bar, so that one is left alone.
+            var putBack = run.steps === 1 || !!call;
+            var detail = "from " + Math.round(run.from) + " to " + Math.round(y) +
+                (run.steps === 1 ? " at once" : " in " + run.steps + " steps") +
+                ", page " + Math.round(run.tall) + " tall, now " + Math.round(pageHeight()) +
+                ", focus " + describe(document.activeElement) +
+                (call ? ", after " + call : "") +
+                (now - lastUrlAt < 5000 ? ", address changed" : "") +
+                (touching ? ", finger on screen" : "") +
+                (putBack ? ", put back" : ", left alone");
+            note("jump", detail);
+            if (now - lastJumpPost > 3000) {
+                lastJumpPost = now;
+                post({ type: "jump", url: location.href, detail: detail });
+            }
+            if (putBack) { restore(run.from); }
+        }
+        window.addEventListener("scroll", function (event) {
+            if (!fenceOn && !onMarketplace()) { return; }
+            var target = event.target;
+            if (target === document || target === window || target === document.documentElement || target === document.scrollingElement) {
+                onPageScroll();
+            } else {
+                fenceBox(target);
+            }
+        }, { capture: true, passive: true });
+
+        // ---------------------------------------------------------- your posts
 
         // Pages that list only your own posts: your Reels and Videos tabs on
         // Facebook, your grid on Instagram.
@@ -436,7 +951,7 @@ object Injected {
         var chrome = '[role="dialog"], [role="banner"], [role="navigation"], [role="complementary"], header, nav';
 
         // Tell the app about your own posts as they show up, so they open at
-        // once later. The app double-checks every one.
+        // once later. The app double-checks every one. Profiles are not posts.
         var sentKeys = {};
         function harvest() {
             if (!window.__as_cfg || !ownNames().length) { return; }
@@ -448,7 +963,7 @@ object Injected {
                 var href = anchor.href;
                 if (typeof href !== "string") { continue; }
                 var info = postInfo(href);
-                if (!info || sentKeys[info.key] || window.__as_known[info.key]) { continue; }
+                if (!info || info.profile || sentKeys[info.key] || window.__as_known[info.key]) { continue; }
                 var namesYou = !!(info.owner && isOwn(info.owner));
                 var onGrid = grid && !(anchor.closest && anchor.closest(chrome));
                 if (namesYou || onGrid) {
@@ -639,6 +1154,18 @@ object Injected {
                 return false;
             }
 
+            // A hidden ad's video never plays or loads in the background.
+            function quiet(cell) {
+                var videos = cell.querySelectorAll("video");
+                for (var v = 0; v < videos.length; v++) {
+                    try {
+                        videos[v].pause();
+                        videos[v].removeAttribute("autoplay");
+                        videos[v].preload = "none";
+                    } catch (e) {}
+                }
+            }
+
             var hiddenCells = [];
             function hideMarketplaceAds() {
                 // Keep the ones already found hidden, in case the page rewrites them.
@@ -657,9 +1184,14 @@ object Injected {
                     var cell = adCell(link);
                     if (cell === null) { continue; }
                     link.__asAdChecked = true;
-                    if (cell) {
+                    // An ad has more than one outside link. Hide its cell once.
+                    if (cell && !cell.__asAdHidden) {
+                        cell.__asAdHidden = true;
                         cell.style.setProperty("display", "none", "important");
+                        quiet(cell);
                         hiddenCells.push(cell);
+                        window.__as_adsHidden = (window.__as_adsHidden || 0) + 1;
+                        if (window.__as_note) { window.__as_note("ad", "hidden"); }
                     }
                 }
             }
@@ -672,8 +1204,26 @@ object Injected {
 
             sweep();
 
+            // An ad is taken out the moment it is added, before it is ever drawn.
+            // Everything else waits for the next sweep.
+            var adLink = 'a[href*="l.facebook.com/l.php"]';
+            function addsAd(mutations) {
+                for (var m = 0; m < mutations.length; m++) {
+                    var added = mutations[m].addedNodes;
+                    for (var n = 0; n < added.length; n++) {
+                        var node = added[n];
+                        if (node.nodeType !== 1) { continue; }
+                        if ((node.matches && node.matches(adLink)) || (node.querySelector && node.querySelector(adLink))) { return true; }
+                    }
+                }
+                return false;
+            }
+
             var pending = false;
-            var observer = new MutationObserver(function () {
+            var observer = new MutationObserver(function (mutations) {
+                if (facebook && location.pathname.indexOf("/marketplace") === 0 && addsAd(mutations)) {
+                    hideMarketplaceAds();
+                }
                 if (pending) { return; }
                 pending = true;
                 setTimeout(function () {
@@ -753,7 +1303,30 @@ object Injected {
      */
     val pageMap: String = """
     (function () {
-        var out = { url: location.href, title: document.title, links: [], labels: [] };
+        // What the page looks like right now, for the Diagnostics screen: where
+        // it is scrolled to, what has the focus, what the app did on this page
+        // lately, and every link on it.
+        var root = document.scrollingElement || document.documentElement;
+        var active = document.activeElement;
+        var focus = "none";
+        if (active && active.tagName && active !== document.body && active !== document.documentElement) {
+            focus = active.tagName.toLowerCase() + (active.getAttribute("type") ? "[" + active.getAttribute("type") + "]" : "");
+            var name = active.getAttribute("aria-label") || active.getAttribute("placeholder") || "";
+            if (name) { focus += " '" + name.slice(0, 40) + "'"; }
+        }
+        var out = {
+            url: location.href,
+            title: document.title,
+            scrolledTo: Math.round(window.pageYOffset || 0),
+            pageHeight: root ? root.scrollHeight : 0,
+            screenHeight: window.innerHeight,
+            focus: focus,
+            adsHidden: window.__as_adsHidden || 0,
+            stopsShort: !!document.getElementById("__as_fence"),
+            events: (window.__as_events || []).slice(-40),
+            links: [],
+            labels: []
+        };
         var seen = {};
         var anchors = document.querySelectorAll("a[href]");
         for (var i = 0; i < anchors.length; i++) {
