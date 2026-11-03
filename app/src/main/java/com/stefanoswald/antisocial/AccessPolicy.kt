@@ -410,6 +410,7 @@ class AccessPolicy(var options: PolicyOptions = PolicyOptions()) {
             "stories" to "create",
             "live" to "producer",
             "reel" to "create",
+            "reels" to "create",
             "media" to "upload",
             "video" to "upload"
         )

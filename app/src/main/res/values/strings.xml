@@ -21,9 +21,17 @@
     <string name="settings">Settings</string>
 
     <string name="compose_post">New post</string>
+    <string name="compose_post_ig">New post or reel</string>
+    <string name="compose_reel">New reel</string>
     <string name="compose_story">New story</string>
     <string name="compose_live">Go live</string>
     <string name="compose_listing">Sell something</string>
+    <string name="notice_ig_post_glow">Tap the glowing + button, then pick a photo or video. A video becomes a reel.</string>
+    <string name="notice_ig_post_find">Tap the + button at the bottom of Instagram, then pick a photo or video.</string>
+    <string name="notice_ig_story_glow">Tap the glowing + button, then choose Story.</string>
+    <string name="notice_ig_story_find">Tap the + button at the bottom of Instagram, then choose Story.</string>
+    <string name="notice_fb_post_failed">Facebook did not open its post window. Scroll down your profile to What\'s on your mind?</string>
+    <string name="notice_fb_reel_failed">Facebook did not open its Reel window. Scroll down your profile to the Reel button.</string>
 
     <string name="menu_home">Back to %1$s</string>
     <string name="menu_diagnostics">Diagnostics</string>

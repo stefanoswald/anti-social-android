@@ -93,9 +93,19 @@ enum class TabGroup(
 }
 
 /** The things you can start from the compose button. */
-enum class ComposeAction(val labelRes: Int) {
-    POST(R.string.compose_post),
+enum class ComposeAction(private val facebookLabel: Int, private val instagramLabel: Int = facebookLabel) {
+    POST(R.string.compose_post, R.string.compose_post_ig),
+    REEL(R.string.compose_reel),
     STORY(R.string.compose_story),
     LIVE(R.string.compose_live),
-    LISTING(R.string.compose_listing)
+    LISTING(R.string.compose_listing);
+
+    /** What the menu says. Instagram turns a video post into a reel, so its post item says so. */
+    fun label(site: SiteKind): Int = if (site == SiteKind.INSTAGRAM) instagramLabel else facebookLabel
+
+    companion object {
+        /** What each site's compose menu offers. */
+        fun available(site: SiteKind): List<ComposeAction> =
+            if (site == SiteKind.INSTAGRAM) listOf(POST, STORY) else entries.toList()
+    }
 }

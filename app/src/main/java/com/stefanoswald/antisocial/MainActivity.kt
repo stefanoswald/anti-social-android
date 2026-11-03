@@ -208,11 +208,8 @@ class MainActivity : AppCompatActivity(), TabController.Callbacks,
      * Marketplace is a Facebook thing, so the Instagram tabs only offer a post.
      */
     private fun showComposeMenu(anchor: View) {
-        val actions = if (currentTab.site == SiteKind.INSTAGRAM) {
-            listOf(ComposeAction.POST)
-        } else {
-            ComposeAction.entries.toList()
-        }
+        val site = currentTab.site
+        val actions = ComposeAction.available(site)
 
         if (actions.size == 1) {
             runCompose(actions.first())
@@ -220,7 +217,7 @@ class MainActivity : AppCompatActivity(), TabController.Callbacks,
         }
 
         PopupMenu(this, anchor).apply {
-            actions.forEachIndexed { index, action -> menu.add(0, index, index, getString(action.labelRes)) }
+            actions.forEachIndexed { index, action -> menu.add(0, index, index, getString(action.label(site))) }
             setOnMenuItemClickListener { item ->
                 runCompose(actions[item.itemId])
                 true
@@ -302,6 +299,12 @@ class MainActivity : AppCompatActivity(), TabController.Callbacks,
                 Snackbar.LENGTH_SHORT
             ).show()
         }
+    }
+
+    override fun onNotice(controller: TabController, message: String) {
+        // Only the page you are looking at may talk to you.
+        if (controller.tab != currentTab) return
+        Snackbar.make(binding.root, message, NOTICE_MS).show()
     }
 
     override fun onExternal(url: String) {
@@ -462,6 +465,8 @@ class MainActivity : AppCompatActivity(), TabController.Callbacks,
     companion object {
         private const val STATE_TAB = "currentTab"
         private const val USERNAME_LOOKUP_GAP_MS = 6 * 3_600_000L
+        /** How long a note like "Tap the glowing + button" stays up. */
+        private const val NOTICE_MS = 7000
     }
 }
 

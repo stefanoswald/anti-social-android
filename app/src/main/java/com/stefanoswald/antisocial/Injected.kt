@@ -51,6 +51,132 @@ object Injected {
     fun openedScript(keys: List<String>): String =
         "window.__as_opened && window.__as_opened(" + org.json.JSONArray(keys) + ");"
 
+    /**
+     * Opens Facebook's or Instagram's own composer. Each step is one button
+     * for the script to find: "label" (an aria-label to click), "startsWith"
+     * (button text to click), or "svg" (an icon's label) with "glow" set to
+     * make that button glow instead of clicking it. "name" comes back in the
+     * "compose" message when a step is not found.
+     */
+    fun composeScript(steps: org.json.JSONArray): String = composeTemplate.replace("__STEPS__", steps.toString())
+
+    private val composeTemplate: String = """
+    (function (steps) {
+        // Opens Facebook's or Instagram's own composer for you. Each step finds
+        // one button on the page: it either clicks it (Facebook's post box and
+        // Reel button open a dialog), or makes it glow so you can tap it yourself
+        // (Instagram's + button opens your photo picker, which needs a real tap).
+        if (window.__asComposing) { return; }
+        window.__asComposing = true;
+
+        function post(payload) {
+            try { $BRIDGE.post(JSON.stringify(payload)); } catch (e) {}
+        }
+
+        function textOf(el) {
+            return (el.innerText || el.textContent || "").replace(/’/g, "'").replace(/\s+/g, " ").trim();
+        }
+
+        function shown(el) {
+            if (!el || (el.closest && el.closest('[aria-hidden="true"]'))) { return false; }
+            var box = el.getBoundingClientRect();
+            return box.width > 0 && box.height > 0;
+        }
+
+        function find(step) {
+            if (step.svg) {
+                var icons = document.querySelectorAll('svg[aria-label="' + step.svg + '"]');
+                for (var i = 0; i < icons.length; i++) {
+                    var host = icons[i].closest('a, button, [role="button"], [role="link"]');
+                    if (host && shown(host)) { return host; }
+                }
+                return null;
+            }
+            var nodes = document.querySelectorAll('[role="button"], button, a, [role="link"], [role="menuitem"]');
+            for (var n = 0; n < nodes.length; n++) {
+                var el = nodes[n];
+                var matched = false;
+                if (step.label) {
+                    matched = el.getAttribute("aria-label") === step.label;
+                } else if (step.startsWith) {
+                    var text = textOf(el);
+                    matched = text.indexOf(step.startsWith) === 0 && text.length < 80;
+                }
+                if (matched && shown(el)) { return el; }
+            }
+            return null;
+        }
+
+        function glow(el) {
+            if (!document.getElementById("__as_glow_style")) {
+                var style = document.createElement("style");
+                style.id = "__as_glow_style";
+                style.textContent =
+                    "@keyframes __asPulse { 0%, 100% { box-shadow: 0 0 0 3px rgba(255, 122, 0, 0.95); }" +
+                    " 50% { box-shadow: 0 0 0 10px rgba(255, 122, 0, 0.3); } }" +
+                    ".__as_glow { animation: __asPulse 1s ease-in-out infinite !important; border-radius: 12px !important; }";
+                (document.head || document.documentElement).appendChild(style);
+            }
+            el.classList.add("__as_glow");
+            var stop = function () { el.classList.remove("__as_glow"); };
+            el.addEventListener("click", stop, { once: true, capture: true });
+            setTimeout(stop, 15000);
+        }
+
+        function dialogs() { return document.querySelectorAll('[role="dialog"]').length; }
+
+        var startPath = location.pathname;
+        var index = 0;
+        var started = Date.now();
+
+        function finish(ok, missing) {
+            post({ type: "compose", ok: ok, missing: missing || "" });
+        }
+
+        function tick() {
+            if (index >= steps.length) { finish(true); return; }
+            var step = steps[index];
+            var el = find(step);
+            if (!el) {
+                if (Date.now() - started > (step.wait || 15000)) { finish(false, step.name); return; }
+                setTimeout(tick, 300);
+                return;
+            }
+            try { el.scrollIntoView({ block: "center" }); } catch (e) {}
+            if (step.glow) {
+                glow(el);
+                index++;
+                started = Date.now();
+                setTimeout(tick, 0);
+                return;
+            }
+            var before = dialogs();
+            el.click();
+            var clickedAt = Date.now();
+            var lastClick = clickedAt;
+            (function waitForComposer() {
+                if (dialogs() > before || location.pathname !== startPath) {
+                    index++;
+                    started = Date.now();
+                    setTimeout(tick, 400);
+                    return;
+                }
+                var now = Date.now();
+                if (now - clickedAt > (step.dialogWait || 8000)) { finish(false, step.name); return; }
+                // The page may not have been ready for the first click. Try again.
+                if (now - lastClick > (step.retry || 2500)) {
+                    var again = find(step);
+                    if (again) { again.click(); }
+                    lastClick = now;
+                }
+                setTimeout(waitForComposer, 200);
+            })();
+        }
+
+        tick();
+    })(__STEPS__);
+    """.trimIndent()
+
     val navigationHook: String = """
     (function () {
         // Frames inside the page are not where you are. Only the page itself
@@ -456,10 +582,12 @@ object Injected {
             window.__asHiding = true;
             var host = (location.hostname || "").toLowerCase();
             var css = "";
+            var facebook = false;
             if (host.indexOf("instagram") !== -1) {
                 css = `$ig`;
             } else if (host.indexOf("facebook") !== -1 || host.indexOf("messenger") !== -1) {
                 css = `$fb`;
+                facebook = host.indexOf("facebook") !== -1;
             }
             if (!css) { return; }
 
@@ -473,21 +601,76 @@ object Injected {
 
             var nagPattern = /^(use the app|open app|open in app|open the app|get app|get the app|switch to the app|open messenger|get messenger|open facebook|open instagram|download messenger|download the app|continue in the app|view in app)${'$'}/i;
 
+            // textContent, not innerText. Reading innerText makes the browser lay the
+            // page out again, and this runs while you scroll.
             function hideNags() {
                 var nodes = document.querySelectorAll("button, a, [role='button']");
                 for (var i = 0; i < nodes.length; i++) {
                     var node = nodes[i];
                     if (node.__asChecked) { continue; }
                     node.__asChecked = true;
-                    var text = (node.innerText || node.textContent || "").trim();
+                    var text = (node.textContent || "").trim();
                     if (text.length > 0 && text.length < 30 && nagPattern.test(text)) {
                         node.style.setProperty("display", "none", "important");
                     }
                 }
             }
 
-            ensureStyle();
-            hideNags();
+            // Marketplace ads. Every listing sits in a grid cell, and each row of the
+            // grid keeps its own <style> tags next to the cells. An ad's cell links out
+            // through l.facebook.com and holds no listing. Ads made Marketplace jump
+            // back to the top while scrolling, so they are taken out.
+            // Returns the cell to hide, false when the link is not an ad cell, or null
+            // when it cannot tell yet (the page has not laid it out).
+            function adCell(link) {
+                var el = link;
+                for (var depth = 0; depth < 24 && el && el.parentElement; depth++) {
+                    var parent = el.parentElement;
+                    for (var c = parent.firstElementChild; c; c = c.nextElementSibling) {
+                        if (c.tagName !== "STYLE") { continue; }
+                        if (el.querySelector('a[href*="/marketplace/item/"]')) { return false; }
+                        var width = el.getBoundingClientRect().width;
+                        var rowWidth = parent.getBoundingClientRect().width;
+                        if (!width || !rowWidth) { return null; }
+                        return width > rowWidth * 0.6 ? false : el;
+                    }
+                    el = parent;
+                }
+                return false;
+            }
+
+            var hiddenCells = [];
+            function hideMarketplaceAds() {
+                // Keep the ones already found hidden, in case the page rewrites them.
+                for (var h = hiddenCells.length - 1; h >= 0; h--) {
+                    var old = hiddenCells[h];
+                    if (!old.isConnected) { hiddenCells.splice(h, 1); continue; }
+                    if (old.style.getPropertyValue("display") !== "none") {
+                        old.style.setProperty("display", "none", "important");
+                    }
+                }
+                if (!facebook || location.pathname.indexOf("/marketplace") !== 0) { return; }
+                var links = document.querySelectorAll('[role="main"] a[href*="l.facebook.com/l.php"]');
+                for (var i = 0; i < links.length; i++) {
+                    var link = links[i];
+                    if (link.__asAdChecked) { continue; }
+                    var cell = adCell(link);
+                    if (cell === null) { continue; }
+                    link.__asAdChecked = true;
+                    if (cell) {
+                        cell.style.setProperty("display", "none", "important");
+                        hiddenCells.push(cell);
+                    }
+                }
+            }
+
+            function sweep() {
+                ensureStyle();
+                hideNags();
+                hideMarketplaceAds();
+            }
+
+            sweep();
 
             var pending = false;
             var observer = new MutationObserver(function () {
@@ -495,8 +678,7 @@ object Injected {
                 pending = true;
                 setTimeout(function () {
                     pending = false;
-                    ensureStyle();
-                    hideNags();
+                    sweep();
                 }, 250);
             });
             observer.observe(document.documentElement, { childList: true, subtree: true });
@@ -548,6 +730,20 @@ object Injected {
                 }
             });
             observer.observe(document.documentElement, { childList: true, subtree: true });
+            // Once the page is parsed, watch only <head>, where a viewport tag
+            // lives. Watching every change on a busy page like Marketplace
+            // costs time on every scroll.
+            function narrow() {
+                observer.disconnect();
+                apply();
+                if (document.head) { observer.observe(document.head, { childList: true }); }
+                observer.observe(document.documentElement, { childList: true });
+            }
+            if (document.readyState === "loading") {
+                document.addEventListener("DOMContentLoaded", narrow, { once: true });
+            } else {
+                narrow();
+            }
         })();
     """.trimIndent()
 

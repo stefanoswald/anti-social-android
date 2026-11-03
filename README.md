@@ -95,10 +95,15 @@ inside the pages. That part is cosmetic. The URL rules are the wall.
 
 ## Posting
 
-The pencil button in the top bar opens the composer. On Facebook it also offers
-**New story**, **Go live**, and **Sell something**. On Instagram it opens your
-profile, where Instagram's own Create button makes a post, a story, or a live
-video (whichever the site offers on that screen).
+Tap the pencil in the top bar for the posting menu.
+
+- **Facebook:** New post, New reel, New story, Go live, Sell something. New post
+  and New reel open your profile, scroll down to its post box or Reel button,
+  and open it for you. Pick your photo or video in the window that opens.
+- **Instagram:** New post or reel, and New story. Both open your profile and make
+  Instagram's own + button glow. Tap it, then pick a photo or video (a video
+  becomes a reel), or choose Story. Instagram only opens the photo picker from a
+  real tap, so the app points at the button instead of pressing it.
 
 Two details worth knowing, both discovered the hard way:
 
@@ -110,6 +115,13 @@ Two details worth knowing, both discovered the hard way:
   `/create/` blindly would open a stranger's profile. So Instagram's create flow
   is only allowed on its deeper step paths, and on a cold load only for step
   names the app knows.
+
+## Marketplace ads
+
+Ads in the Marketplace results are hidden. They made the results jump back to
+the top while scrolling. Each listing sits in a grid cell, and an ad's cell links
+out through `l.facebook.com` and holds no listing, which is how the app tells
+them apart (see `hidingScript` in `Injected.kt`).
 
 ## Your username
 

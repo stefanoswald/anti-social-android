@@ -16,6 +16,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Date
 
@@ -63,6 +64,8 @@ class TabController(
         ): Boolean
         /** The page asked for the camera or the microphone (Go Live). */
         fun onPermissionRequest(request: PermissionRequest)
+        /** A short note for you, like where to tap to post. */
+        fun onNotice(controller: TabController, message: String)
     }
 
     val webView: WebView = WebView(context)
@@ -115,6 +118,11 @@ class TabController(
      * counts.
      */
     private var lastClickAt = 0L
+    /** A composer to open once its page has loaded. */
+    private class PendingCompose(val action: ComposeAction, val site: SiteKind, val steps: JSONArray, val started: Long)
+    private var pendingCompose: PendingCompose? = null
+    /** The compose action whose script is running on the page. */
+    private var composeInFlight: ComposeAction? = null
     /** True while the page shows the "learn your username first" note instead of a site. */
     private var showingHomeNote = false
     private var configScriptHandle: androidx.webkit.ScriptHandler? = null
@@ -203,13 +211,15 @@ class TabController(
     fun goBack(): Boolean {
         if (!webView.canGoBack()) return false
         endOwnerCheck()
+        pendingCompose = null
         webView.goBack()
         return true
     }
 
     /**
      * Checks the page you are on against the current rules, and leaves it if
-     * it no longer passes. Used when "Only my own posts" is switched on.
+     * it no longer passes. Used when "Open other people's posts I tap" is
+     * switched off.
      */
     fun recheckCurrentPage() {
         val here = webView.url ?: return
@@ -231,19 +241,60 @@ class TabController(
                 return "Open your Instagram inbox once so the app can learn your username, " +
                     "or type it into Settings."
             }
-            load("https://www.instagram.com/$name/")
+            // Instagram's + button opens your photo picker, which only works
+            // from a real tap, so the app makes it glow instead of pressing it.
+            startCompose(action, "https://www.instagram.com/$name/", SiteKind.INSTAGRAM,
+                JSONArray().put(JSONObject().put("svg", "New post").put("glow", true).put("name", "plus")))
             return null
         }
 
-        val url = when (action) {
-            // Facebook resolves /me to your own profile, where the composer is.
-            ComposeAction.POST -> "https://www.facebook.com/me"
-            ComposeAction.STORY -> "https://www.facebook.com/stories/create"
-            ComposeAction.LIVE -> "https://www.facebook.com/live/producer"
-            ComposeAction.LISTING -> "https://www.facebook.com/marketplace/create"
+        when (action) {
+            // Facebook resolves /me to your own profile. Its post box and
+            // Reel button sit far down that page, so the app scrolls to them
+            // and opens them.
+            ComposeAction.POST -> startCompose(action, "https://www.facebook.com/me", SiteKind.FACEBOOK,
+                JSONArray().put(JSONObject().put("startsWith", "What's on your mind").put("name", "post-box")))
+            ComposeAction.REEL -> startCompose(action, "https://www.facebook.com/me", SiteKind.FACEBOOK,
+                JSONArray().put(JSONObject().put("label", "Reel").put("name", "reel-button")))
+            ComposeAction.STORY -> load("https://www.facebook.com/stories/create")
+            ComposeAction.LIVE -> load("https://www.facebook.com/live/producer")
+            ComposeAction.LISTING -> load("https://www.facebook.com/marketplace/create")
         }
-        load(url)
         return null
+    }
+
+    private fun startCompose(action: ComposeAction, url: String, site: SiteKind, steps: JSONArray) {
+        load(url)
+        pendingCompose = PendingCompose(action, site, steps, System.currentTimeMillis())
+    }
+
+    /** Runs the composer script once the page it needs has loaded. */
+    private fun runPendingCompose(url: String?) {
+        val pending = pendingCompose ?: return
+        if (System.currentTimeMillis() - pending.started > 30_000) {
+            pendingCompose = null
+            return
+        }
+        if (url == null || AccessPolicy.siteFor(url) != pending.site) return
+        pendingCompose = null
+        composeInFlight = pending.action
+        webView.evaluateJavascript(Injected.composeScript(pending.steps), null)
+    }
+
+    /** What to tell you once the composer script has done its part. */
+    private fun composeNotice(action: ComposeAction, opened: Boolean): String? {
+        val res = if (tab.site == SiteKind.INSTAGRAM) {
+            when {
+                action == ComposeAction.STORY && opened -> R.string.notice_ig_story_glow
+                action == ComposeAction.STORY -> R.string.notice_ig_story_find
+                opened -> R.string.notice_ig_post_glow
+                else -> R.string.notice_ig_post_find
+            }
+        } else {
+            if (opened) return null
+            if (action == ComposeAction.REEL) R.string.notice_fb_reel_failed else R.string.notice_fb_post_failed
+        }
+        return webView.context.getString(res)
     }
 
     fun pageMap(callback: (String) -> Unit) {
@@ -290,6 +341,9 @@ class TabController(
 
     private fun load(url: String) {
         endOwnerCheck()
+        // Any other page load cancels a composer that was waiting to open.
+        pendingCompose = null
+        composeInFlight = null
         awaitingOwnProfile = Uri.parse(url).path?.lowercase()?.trim('/') == "me"
         webView.loadUrl(url)
     }
@@ -701,6 +755,14 @@ class TabController(
 
             "tap" -> noteTap(body.optString("href"))
 
+            "compose" -> {
+                val action = composeInFlight ?: return
+                composeInFlight = null
+                val opened = body.optBoolean("ok")
+                Log.i(TAG, "[${tab.id}] compose $action opened: $opened")
+                composeNotice(action, opened)?.let { callbacks.onNotice(this, it) }
+            }
+
             "links" -> {
                 val page = body.optString("page")
                 val list = body.optJSONArray("hrefs") ?: return
@@ -741,8 +803,12 @@ class TabController(
                 }
             }
 
-            // A link you tapped yourself.
-            if (request.isForMainFrame && request.hasGesture()) noteTap(url)
+            // A link you tapped yourself. Leaving the page also cancels a
+            // composer that was waiting to open.
+            if (request.isForMainFrame && request.hasGesture()) {
+                noteTap(url)
+                pendingCompose = null
+            }
 
             return when (val decision = policy.decide(url)) {
                 is PolicyDecision.Allow -> {
@@ -799,6 +865,7 @@ class TabController(
             CookieManager.getInstance().flush()
             // Never show a post that is still being checked or was refused.
             if (!isCheckingOwner && url != null && isAllowedWithoutChecking(url)) showPage()
+            runPendingCompose(url)
             callbacks.onStateChanged(this@TabController)
             callbacks.onPageFinished()
         }
